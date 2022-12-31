@@ -1,0 +1,1912 @@
+mads 2.1.3
+Source: lzssp.asm
+     1 				;* When used in a project, the LZSS driver must be assembled from this file!
+     2 				;* Include everything needed below, and edit accordingly.
+     3
+     4 				;-----------------
+     5
+     6 				;//---------------------------------------------------------------------------------------------
+     7
+     8 				;* Build flags, they are not the requirement, and could be changed if necessary 
+     9
+    10 					OPT R- F-
+    11 					icl "atari.def"			; Missing or conflicting labels cause build errors, be extra careful! 
+Source: atari.def
+     1 				;* some memory addresses and definitions
+     2
+     3 				;//---------------------------------------------------------------------------------------------
+     4
+     5 = 000A			.def DOSVEC			= $000A
+     6 = 0012			.def RTCLOK			= $0012	; Real Time Clock
+     7
+     8 = 0200			.def VDSLST			= $0200	; Display List Interrupt Vector
+     9
+    10 = 0222			.def VVBLKI			= $0222	; Vertical Blank Immediate (VBI) Register
+    11 = 022F			.def SDMCTL			= $022F	; Shadow Direct Memory Access Control address
+    12 = 0230			.def SDLSTL			= $0230
+    13 = 02C4			.def COLOR0			= $02C4
+    14 = 02C5			.def COLOR1			= $02C5
+    15 = 02C6			.def COLOR2			= $02C6
+    16 = 02C7			.def COLOR3			= $02C7
+    17 = 02C8			.def COLOR4			= $02C8
+    18 = 02F2			.def CH1			= $02F2
+    19 = 02FC			.def CH				= $02FC
+    20
+    21 = D000			.def HPOSP0          		= $D000	; HORIZONTAL POSITION P0
+    22 = D001			.def HPOSP1          		= $D001	; HORIZONTAL POSITION P1
+    23 = D002			.def HPOSP2          		= $D002	; HORIZONTAL POSITION P2
+    24 = D003			.def HPOSP3          		= $D003	; HORIZONTAL POSITION P3
+    25 = D004			.def HPOSM0          		= $D004	; HORIZONTAL POSITION M0
+    26 = D005			.def HPOSM1          		= $D005	; HORIZONTAL POSITION M1
+    27 = D006			.def HPOSM2          		= $D006	; HORIZONTAL POSITION M2
+    28 = D007			.def HPOSM3          		= $D007	; HORIZONTAL POSITION M3
+    29 = D008			.def SIZEP0          		= $D008	; SIZE P0
+    30 = D009			.def SIZEP1          		= $D009	; SIZE P0
+    31 = D00A			.def SIZEP2          		= $D00A	; SIZE P0
+    32 = D00B			.def SIZEP3          		= $D00B	; SIZE P0
+    33 = D00C			.def SIZEM           		= $D00C	; SIZE M
+    34 = D00D			.def GRAFP0          		= $D00D
+    35 = D00E			.def GRAFP1          		= $D00E
+    36 = D00F			.def GRAFP2          		= $D00F
+    37 = D010			.def GRAFP3          		= $D010
+    38 = D010			.def TRIG0			= $D010
+    39 = D011			.def GRAFM           		= $D011
+    40 = D012			.def COLPM0          		= $D012	; COLOR P0/M0
+    41 = D013			.def COLPM1          		= $D013	; COLOR P1/M1
+    42 = D014			.def COLPM2          		= $D014	; COLOR P2/M2
+    43 = D014			.def NTSCPAL         		= $D014
+    44 = D015			.def COLPM3          		= $D015	; COLOR P3/M3
+    45 = D016			.def COLPF0         		= $D016
+    46 = D017			.def COLPF1          		= $D017
+    47 = D018			.def COLPF2          		= $D018
+    48 = D019			.def COLPF3          		= $D019
+    49 = D01A			.def COLBK           		= $D01A
+    50 = D01B			.def GPRIOR          		= $D01B
+    51 = D01D			.def GRACTL          		= $D01D
+    52
+    53 = D200			.def POKEY 			= $D200
+    54 = D209			.def KBCODE			= $D209
+    55 = D20A			.def RANDOM			= $D20A
+    56 = D20B			.def POTGO 			= $D20B ; reset paddles for new input to read
+    57 = D20E			.def IRQEN          		= $D20E
+    58 = D20E			.def IRQST          		= $D20E
+    59 = D20F			.def SKCTL			= $D20F
+    60 = D20F			.def SKSTAT			= $D20F
+    61
+    62 = D300			.def PORTA			= $D300
+    63 = D301			.def PORTB           		= $D301
+    64
+    65 = D400			.def DMACTL          		= $D400
+    66 = D401			.def CHACTL          		= $D401
+    67 = D402			.def DLISTL          		= $D402
+    68 = D403			.def DLISTH          		= $D403
+    69 = D404			.def HSCROL          		= $D404
+    70 = D405			.def VSCROL          		= $D405
+    71 = D407			.def PMBASE          		= $D407	; STARTING ADRESS PLAYER MISSILE GRAPHICS
+    72 = D409			.def CHBASE          		= $D409
+    73 = D40A			.def WSYNC           		= $D40A
+    74 = D40B			.def VCOUNT          		= $D40B
+    75 = D40E			.def NMIEN          		= $D40E 
+    76 = D40F			.def NMIST           		= $D40F
+    77 = D40F			.def NMIRES			= $D40F
+    78
+    79 = FFFA			.def NMI             		= $FFFA
+    80 = FFFC			.def RESET           		= $FFFC
+    81 = FFFE			.def IRQ             		= $FFFE
+    82
+    83 				;//---------------------------------------------------------------------------------------------
+    84
+    85 				.MACRO CHECK_NTSCPAL
+    86 						lda		NTSCPAL
+    87 						cmp		#1
+    88 				.ENDM
+    89
+    90 				.MACRO SETBKCOL COLVAL
+    91 				.ifdef DEBUG_COLOR
+    92 						lda		#:COLVAL 
+    93 						sta		COLBK
+    94 				.endif
+    95 				.ENDM
+    96
+    97 				.MACRO KIL
+    98 						dta 2
+    99 				.ENDM
+   100
+   101 				;//---------------------------------------------------------------------------------------------
+   102
+   103 = 0040			.def LMS                 	= 64
+   104 = 0010			.def HS                  	= 16
+   105 = 0004			.def MODE4               	= 4
+   106 = 000D			.def MODED               	= $0D
+   107 = 000E			.def MODEE               	= $0E
+   108 = 000F			.def MODEF               	= $0F
+   109 = 0070			.def BLANK8              	= $70
+   110 = 0080			.def DLI                 	= 128
+   111 = 0041			.def DLIJUMP             	= $41	; jump + wait vsync
+   112 = 0001			.def DL_JUMP             	= $1	; jump 
+   113 = 0000			.def PFSIZE_DISABLED		= 0
+   114 = 0001			.def PFSIZE_NARROW		= 1
+   115 = 0002			.def PFSIZE_NORMAL		= 2
+   116 = 0003			.def PFSIZE_WIDE		= 3
+   117 = 0002			.def GRACTL_PDMA		= 1<<1
+   118 = 0001			.def GRACTL_MDMA		= 1<<0
+    12
+    13 				;-----------------
+    14
+    15 				;//---------------------------------------------------------------------------------------------
+    16
+    17 				;* ORG addresses can always be changed based on how memory is layed out, as long as it fits, it should work fine
+    18
+    19 = 0000			ZEROPAGE	equ $0000		; Zeropage, the addresses may be changed if necessary, required
+    20 = 1000			DRIVER		equ $1000		; Unrolled LZSS driver by rensoupp, for LZSS data buffer and driver routines, required
+    21 					
+    22 				;* Below is a bunch of example addreses, they are not intended to be a requirement! 
+    23 					
+    24 = 2000			SOUNDTEST	equ $2000		; Example program, optional 
+    25 = 3000			SONGINDEX	equ $3000		; Songs index and data, alligned memory for easier insertion from RMT, optional 
+    26
+    27 				;-----------------
+    28
+    29 				;//---------------------------------------------------------------------------------------------
+    30
+    31 				;* The Zeropage is a requirement, but could be edited is necessary 
+    32
+    33 					ORG ZEROPAGE
+    34 				.PAGES 1
+    35 					icl "lzsspZP.asm"
+Source: lzsspZP.asm
+     1 				.LOCAL ZPLZS
+     2
+     3 = 0000			SongPtr    		.ds     2		
+     4 = 0002			bit_data        .ds     1
+     5
+     6 				.ENDL
+    36 				.ENDPG
+    37
+    38 				;-----------------
+    39
+    40 				;//---------------------------------------------------------------------------------------------
+    41
+    42 				;* The unrolled LZSS driver + Buffer will be inserted here first, it is a requirement!
+    43
+    44 					org DRIVER
+    45 					icl "playlzs16u.asm"
+Source: playlzs16u.asm
+     1 				;// code by dmsc, unrolled by rensoupp
+     2 				;
+     3 				; LZSS Compressed SAP player for 16 match bits
+     4 				; --------------------------------------------
+     5 				;
+     6 				; This player uses:
+     7 				;  Match length: 8 bits  (2 to 257)
+     8 				;  Match offset: 8 bits  (1 to 256)
+     9 				;  Min length: 2
+    10 				;  Total match bits: 16 bits
+    11 				;
+    12
+    13 				.ifndef POKEY
+    14 				POKEY = $D200
+    15 				.endif
+    16
+    17 				.ifndef LZSS_PLAYER_FIXEDBUF
+    18 					.ALIGN $100
+    19 				LZSSBuffers
+    20 = 1000			    .ds 256 * 9
+    21 				.else
+    22 				LZSSBuffers = LZSS_PLAYER_FIXEDBUF
+    23 				.endif
+    24
+    25 				//--- macros to grab bytes from compressed stream
+    26 				.MACRO GetByteIncY
+    27 				    lda     (ZPLZS.SongPtr),y
+    28 				    iny
+    29 				.ENDM
+    30
+    31 				.MACRO AddByteIncY
+    32 				    adc     (ZPLZS.SongPtr),y     ;// make sure C is clear
+    33 				    iny
+    34 				.ENDM
+    35
+    36 				;//##########################################################################
+    37 				.LOCAL LZS
+    38 = 1900			SongStartPtr        .ds     2
+    39 = 1902			SongEndPtr          .ds     2
+    40 = 1904			DstBufOffset        .ds     1
+    41 = 1905			chn_bitsInit        .ds     1
+    42 = 1906			chn_bits            .ds     1
+    43 FFFF> 1907-2530> 00	Initialized         .byte   0
+    44 1908 00			DLIDstBufOffset     .byte   0
+    45 				.ENDL
+    46
+    47 				;//##########################################################################
+    48 1909			DecodeBufferBytes
+    49 				    ; We are decoding a new match/literal
+    50 1909 46 02		    lsr     ZPLZS.bit_data    ; Get next bit
+    51 190B D0 06		    bne     @got_bit
+    52 190D			    GetByteIncY         ; Not enough bits, refill!
+Macro: GETBYTEINCY [Source: playlzs16u.asm]
+     1 190D B1 00		    lda     (ZPLZS.SongPtr),y
+     2 190F C8			    iny
+Source: playlzs16u.asm
+    53 1910 6A			    ror                 ; Extract a new bit and add a 1 at the high bit (from C set above)
+    54 1911 85 02		    sta     ZPLZS.bit_data
+    55 1913			@got_bit:
+    56 1913			    GetByteIncY         ; Always read a byte, it could mean "match size/offset" or "literal byte"
+Macro: GETBYTEINCY [Source: playlzs16u.asm]
+     1 1913 B1 00		    lda     (ZPLZS.SongPtr),y
+     2 1915 C8			    iny
+Source: playlzs16u.asm
+    57 1916 60			    rts
+    58
+    59
+    60 				.MACRO DecodeChannel CH_IDX
+    61 				    lsr     LZS.chn_bits        ; TODO: use SM code to set a branch ?
+    62 				    bcs     skip_chn            ; C=1 : skip this channel
+    63 				
+    64 				    lda     SMSet_CHRLo+1
+    65 				SMSet_CMP    
+    66 				    cmp     #$ff                ; (must be reset on init!)
+    67 				SMSet_Branch:    
+    68 				    bne     CopyStoreCH
+    69 				
+    70 				    jsr     DecodeBufferBytes
+    71 				    bcs     store               ; Bit = 1 is "literal", bit = 0 is "match"
+    72 				
+    73 				    sta     SMSet_CHRLo+1       ; Store in "copy pos"
+    74 				
+    75 				    AddByteIncY
+    76 				    sta     SMSet_CMP+1  ; Store in "copy length"
+    77 				
+    78 				CopyStoreCH:
+    79 				    inc     SMSet_CHRLo+1
+    80 				SMSet_CHRLo    
+    81 				    lda     LZSSBuffers+:CH_IDX*256 ; Now, read old data, jump to data store ; (low byte must be reset on init !)
+    82 				
+    83 				store:
+    84 				;    sta     POKEY+:CH_IDX      ; Store to output and buffer
+    85 				    sta     LZSSBuffers+:CH_IDX*256,x
+    86 				skip_chn    
+    87 				.ENDM
+    88
+    89 				;.print (LblDecodeChannel7-LblDecodeChannel8)
+    90 				;.error ((LblDecodeChannel7-LblDecodeChannel8)>32)
+    91
+    92 				;//##########################################################################
+    93 				//--- update song pointer each frame (we can never move more than 255 bytes per frame even at 200hz, max is 3 bytes * 9 channels * 4 updates = 108 bytes )
+    94
+    95 				// IN Y: ZPLZS.SrcBufOffset
+    96 1917			UpdateLZSPtr	
+    97 1917 98			    tya
+    98 1918 18				clc
+    99 1919 65 00			adc	ZPLZS.SongPtr
+   100 191B 85 00			sta	ZPLZS.SongPtr
+   101 191D 90 02			bcc @NoI
+   102 191F E6 01			inc	ZPLZS.SongPtr+1
+   103 1921			@NoI	
+   104 1921 60				rts
+   105
+   106 				;//##########################################################################
+   107
+   108 1922			LZSSReset
+   109 1922 A9 01			lda		#1
+   110 1924 85 02			sta		ZPLZS.bit_data            ;// bits to decide when to grab new data from the compressed stream
+   111 1926 8D 07 19		    sta     LZS.Initialized           ;// flag decoder as initialized
+   112 					
+   113 				    //--- set song ptr
+   114 1929 AD 01 19		    lda     LZS.SongStartPtr+1
+   115 192C 85 01		    sta     ZPLZS.SongPtr+1
+   116 192E AD 00 19		    lda     LZS.SongStartPtr
+   117 1931 85 00		    sta     ZPLZS.SongPtr
+   118
+   119 				    //--- set dest offset in decompressed streams
+   120 1933 A0 00			ldy		#0
+   121 1935 8C 04 19		    sty     LZS.DstBufOffset   
+   122
+   123 				    ;//--- 1st frame of data is at offset 255 (1st frame is always stored uncompressed)
+   124 1938 A9 FF		    lda     #255
+   125 193A 8D 08 19		    sta     LZS.DLIDstBufOffset     
+   126
+   127 				    ;// get first byte which contains channels mask
+   128 193D			    GetByteIncY
+Macro: GETBYTEINCY [Source: playlzs16u.asm]
+     1 193D B1 00		    lda     (ZPLZS.SongPtr),y
+     2 193F C8			    iny
+Source: playlzs16u.asm
+   129 1940 8D 05 19		    sta     LZS.chn_bitsInit
+   130 1943 8D 06 19		    sta     LZS.chn_bits
+   131
+   132 				    //--- reset initial value in arrays/decoder code (force CMP test to equal to take the path for decoding new bytes)    
+   133 1946 AD FF 19		    lda     DecodeChannel0.SMSet_CHRLo+1
+   134 1949 8D EA 19		    sta     DecodeChannel0.SMSet_CMP+1
+   135 194C AD 22 1A		    lda     DecodeChannel1.SMSet_CHRLo+1
+   136 194F 8D 0D 1A		    sta     DecodeChannel1.SMSet_CMP+1
+   137 1952 AD 45 1A		    lda     DecodeChannel2.SMSet_CHRLo+1
+   138 1955 8D 30 1A		    sta     DecodeChannel2.SMSet_CMP+1
+   139 1958 AD 68 1A		    lda     DecodeChannel3.SMSet_CHRLo+1
+   140 195B 8D 53 1A		    sta     DecodeChannel3.SMSet_CMP+1
+   141 195E AD 8B 1A		    lda     DecodeChannel4.SMSet_CHRLo+1
+   142 1961 8D 76 1A		    sta     DecodeChannel4.SMSet_CMP+1
+   143 1964 AD AE 1A		    lda     DecodeChannel5.SMSet_CHRLo+1
+   144 1967 8D 99 1A		    sta     DecodeChannel5.SMSet_CMP+1
+   145 196A AD D1 1A		    lda     DecodeChannel6.SMSet_CHRLo+1
+   146 196D 8D BC 1A		    sta     DecodeChannel6.SMSet_CMP+1
+   147 1970 AD F4 1A		    lda     DecodeChannel7.SMSet_CHRLo+1
+   148 1973 8D DF 1A		    sta     DecodeChannel7.SMSet_CMP+1
+   149 1976 AD 17 1B		    lda     DecodeChannel8.SMSet_CHRLo+1
+   150 1979 8D 02 1B		    sta     DecodeChannel8.SMSet_CMP+1
+   151
+   152 197C A9 18		    lda     #.HI(LZSSBuffers+$100*8)
+   153 197E 8D 92 19		    sta     @SMSet_LZSSBuf+2
+   154
+   155 1981 A2 08		    ldx #9-1
+   156 				    
+   157 1983			@SetFirstFrame 
+   158 1983			    GetByteIncY   
+Macro: GETBYTEINCY [Source: playlzs16u.asm]
+     1 1983 B1 00		    lda     (ZPLZS.SongPtr),y
+     2 1985 C8			    iny
+Source: playlzs16u.asm
+   159
+   160 1986 4E 06 19		    lsr     LZS.chn_bits
+   161 1989 90 05		    bcc     @DontSetPokey
+   162 				    
+   163 				;	sta     POKEY,x                 ;// channel was not compressed, write to Pokey just once
+   164 198B 9D 50 1C		    sta SDWPOK0,x			;// edit by VinsCool: write to POKEY buffer for VUPlayer's timing and VUMeter display
+   165 				    
+   166 198E B0 03		    bcs     @DontSetBuffer
+   167 1990			@DontSetPokey    
+   168 1990			@SMSet_LZSSBuf    
+   169 1990 8D FF 18		    sta     LZSSBuffers+$100*8+255    ;// channel was compressed, write first value at offset 255
+   170 1993			@DontSetBuffer    
+   171 1993 CE 92 19		    dec     @SMSet_LZSSBuf+2        ;// next buffer
+   172 1996 CA			    dex 
+   173 1997 10 EA		    bpl     @SetFirstFrame
+   174 				    
+   175 				    //--- update src stream ptr
+   176 1999 20 17 19			jsr     UpdateLZSPtr
+   177 				    //---
+   178 				;    jmp     CreateChannelSkipCode       
+   179
+   180 				;//-------------------------------------------------------------------------
+   181 				;//--- called during song reset to modify NMI code that sends data to pokey
+   182 				;//--- this changes writes to pokey (STA) to reads (LDA) when channels are skipped - could be a problem when reading POT stuff ????
+   183
+   184
+   185 199C			CreateChannelSkipCode
+   186 199C			.LOCAL
+   187 199C AD 05 19		    lda     LZS.chn_bitsInit
+   188
+   189 199F			SMSet_chn_bitsInit
+   190 199F C9 00		    cmp     #0
+   191 19A1 F0 1E		    beq     NoNeedToReinit          ;// same mask as previous song
+   192 19A3 8D A0 19		    sta     SMSet_chn_bitsInit+1
+   193 19A6 8D 06 19		    sta     LZS.chn_bits
+   194
+   195 19A9 A2 07		    ldx     #9-1-1
+   196 19AB A0 00		    ldy     #0
+   197
+   198 19AD			NextChannel
+   199 19AD A9 8D		    lda     #$8D    ;// STA ABS
+   200 19AF 0E 06 19		    asl     LZS.chn_bits
+   201 19B2 90 03		    bcc     @WriteChannel
+   202 19B4 A9 AD		    lda     #$AD    ;// LDA ABS     ;// change the write to pokey to a read 
+   203 19B6 18			    clc
+   204 19B7			@WriteChannel
+   205 19B7 99 49 1B		    sta     SMSet_WritePokey0,y
+   206
+   207 19BA 98			    tya
+   208 19BB 69 06		    adc     #SMSet_WritePokey1-SMSet_WritePokey0
+   209 19BD A8			    tay
+   210
+   211 19BE CA			    dex
+   212 19BF 10 EC		    bpl     NextChannel
+   213 19C1			NoNeedToReinit
+   214 19C1 60			    rts
+   215 				.ENDL
+   216
+   217 				;//##########################################################################
+   218 				;//--- Method 1: play a single update for the current frame 
+   219 				;//--- when CPU usage isn't important and it's ok to poll VCOUNT to wait for the next update
+   220
+   221 19C2			LZSSPlayFrame:    
+   222 19C2 AD 04 19		    lda     LZS.DstBufOffset
+   223 19C5 8D 08 19		    sta     LZS.DLIDstBufOffset
+   224
+   225 19C8 A2 01		    ldx     #1
+   226 19CA AD 07 19		    lda     LZS.Initialized
+   227 19CD D0 04		    bne     LZSSPlay1Frame
+   228 				    //--- (re)init song 
+   229 19CF 20 22 19		    jsr     LZSSReset
+   230 19D2 60			    rts
+   231
+   232
+   233 				;//##########################################################################
+   234 				;//--- Method 2: play all updates for the current frame (depending on song speed)
+   235 				;//--- should be called at during VBI, so that only Pokey register updates are done during DLis
+   236
+   237 				/*
+   238 				LZSSPlayFrames:    
+   239 				    lda     LZS.DstBufOffset
+   240 				    sta     LZS.DLIDstBufOffset
+   241
+   242 				    ldx     SongSpeed
+   243
+   244 					lda		LZS.Initialized
+   245 					bne		@Initialized
+   246 				    //--- (re)init song 
+   247 				    jsr     LZSSReset
+   248 				    //--- have multiple pokey frames to play ?
+   249 				    ldx     SongSpeed
+   250 				    dex
+   251 				    bne     @Initialized
+   252 				    rts
+   253 				*/
+   253
+   254
+   255 19D3			@Initialized
+   256
+   257
+   258 19D3			LZSSPlay1Frame
+   259 19D3 8E 23 1B		    stx     SMSet_PlayCounter+1
+   260
+   261 19D6 AE 04 19		    ldx     LZS.DstBufOffset
+   262
+   263 19D9 AD 05 19		    lda     LZS.chn_bitsInit
+   264 19DC 8D 06 19		    sta     LZS.chn_bits
+   265 				    
+   266 19DF A0 00			ldy     #0     ;// source offset in compressed data
+   267 				    
+   268 				    ; Loop through all "channels", one for each POKEY register
+   269
+   270 19E1			LblDecodeChannel8
+   271 19E1			    DecodeChannel 8
+Macro: DECODECHANNEL [Source: playlzs16u.asm]
+     1 19E1 4E 06 19		    lsr     LZS.chn_bits        ; TODO: use SM code to set a branch ?
+     2 19E4 B0 1E		    bcs     skip_chn            ; C=1 : skip this channel
+     4 19E6 AD FF 19		    lda     SMSet_CHRLo+1
+     5 19E9			SMSet_CMP    
+     6 19E9 C9 FF		    cmp     #$ff                ; (must be reset on init!)
+     7 19EB			SMSet_Branch:    
+     8 19EB D0 0E		    bne     CopyStoreCH
+    10 19ED 20 09 19		    jsr     DecodeBufferBytes
+    11 19F0 B0 0F		    bcs     store               ; Bit = 1 is "literal", bit = 0 is "match"
+    13 19F2 8D FF 19		    sta     SMSet_CHRLo+1       ; Store in "copy pos"
+     1 19F5 71 00		    adc     (ZPLZS.SongPtr),y     ;// make sure C is clear
+     2 19F7 C8			    iny
+Source: playlzs16u.asm
+    16 19F8 8D EA 19		    sta     SMSet_CMP+1  ; Store in "copy length"
+    18 19FB			CopyStoreCH:
+    19 19FB EE FF 19		    inc     SMSet_CHRLo+1
+    20 19FE			SMSet_CHRLo    
+    21 19FE AD 00 18		    lda     LZSSBuffers+8*256 ; Now, read old data, jump to data store ; (low byte must be reset on init !)
+    23 1A01			store:
+    25 1A01 9D 00 18		    sta     LZSSBuffers+8*256,x
+    26 1A04			skip_chn    
+Source: playlzs16u.asm
+   272 1A04			LblDecodeChannel7    
+   273 1A04			    DecodeChannel 7
+Macro: DECODECHANNEL [Source: playlzs16u.asm]
+     1 1A04 4E 06 19		    lsr     LZS.chn_bits        ; TODO: use SM code to set a branch ?
+     2 1A07 B0 1E		    bcs     skip_chn            ; C=1 : skip this channel
+     4 1A09 AD 22 1A		    lda     SMSet_CHRLo+1
+     5 1A0C			SMSet_CMP    
+     6 1A0C C9 FF		    cmp     #$ff                ; (must be reset on init!)
+     7 1A0E			SMSet_Branch:    
+     8 1A0E D0 0E		    bne     CopyStoreCH
+    10 1A10 20 09 19		    jsr     DecodeBufferBytes
+    11 1A13 B0 0F		    bcs     store               ; Bit = 1 is "literal", bit = 0 is "match"
+    13 1A15 8D 22 1A		    sta     SMSet_CHRLo+1       ; Store in "copy pos"
+     1 1A18 71 00		    adc     (ZPLZS.SongPtr),y     ;// make sure C is clear
+     2 1A1A C8			    iny
+Source: playlzs16u.asm
+    16 1A1B 8D 0D 1A		    sta     SMSet_CMP+1  ; Store in "copy length"
+    18 1A1E			CopyStoreCH:
+    19 1A1E EE 22 1A		    inc     SMSet_CHRLo+1
+    20 1A21			SMSet_CHRLo    
+    21 1A21 AD 00 17		    lda     LZSSBuffers+7*256 ; Now, read old data, jump to data store ; (low byte must be reset on init !)
+    23 1A24			store:
+    25 1A24 9D 00 17		    sta     LZSSBuffers+7*256,x
+    26 1A27			skip_chn    
+Source: playlzs16u.asm
+   274 1A27			    DecodeChannel 6
+Macro: DECODECHANNEL [Source: playlzs16u.asm]
+     1 1A27 4E 06 19		    lsr     LZS.chn_bits        ; TODO: use SM code to set a branch ?
+     2 1A2A B0 1E		    bcs     skip_chn            ; C=1 : skip this channel
+     4 1A2C AD 45 1A		    lda     SMSet_CHRLo+1
+     5 1A2F			SMSet_CMP    
+     6 1A2F C9 FF		    cmp     #$ff                ; (must be reset on init!)
+     7 1A31			SMSet_Branch:    
+     8 1A31 D0 0E		    bne     CopyStoreCH
+    10 1A33 20 09 19		    jsr     DecodeBufferBytes
+    11 1A36 B0 0F		    bcs     store               ; Bit = 1 is "literal", bit = 0 is "match"
+    13 1A38 8D 45 1A		    sta     SMSet_CHRLo+1       ; Store in "copy pos"
+     1 1A3B 71 00		    adc     (ZPLZS.SongPtr),y     ;// make sure C is clear
+     2 1A3D C8			    iny
+Source: playlzs16u.asm
+    16 1A3E 8D 30 1A		    sta     SMSet_CMP+1  ; Store in "copy length"
+    18 1A41			CopyStoreCH:
+    19 1A41 EE 45 1A		    inc     SMSet_CHRLo+1
+    20 1A44			SMSet_CHRLo    
+    21 1A44 AD 00 16		    lda     LZSSBuffers+6*256 ; Now, read old data, jump to data store ; (low byte must be reset on init !)
+    23 1A47			store:
+    25 1A47 9D 00 16		    sta     LZSSBuffers+6*256,x
+    26 1A4A			skip_chn    
+Source: playlzs16u.asm
+   275 1A4A			    DecodeChannel 5
+Macro: DECODECHANNEL [Source: playlzs16u.asm]
+     1 1A4A 4E 06 19		    lsr     LZS.chn_bits        ; TODO: use SM code to set a branch ?
+     2 1A4D B0 1E		    bcs     skip_chn            ; C=1 : skip this channel
+     4 1A4F AD 68 1A		    lda     SMSet_CHRLo+1
+     5 1A52			SMSet_CMP    
+     6 1A52 C9 FF		    cmp     #$ff                ; (must be reset on init!)
+     7 1A54			SMSet_Branch:    
+     8 1A54 D0 0E		    bne     CopyStoreCH
+    10 1A56 20 09 19		    jsr     DecodeBufferBytes
+    11 1A59 B0 0F		    bcs     store               ; Bit = 1 is "literal", bit = 0 is "match"
+    13 1A5B 8D 68 1A		    sta     SMSet_CHRLo+1       ; Store in "copy pos"
+     1 1A5E 71 00		    adc     (ZPLZS.SongPtr),y     ;// make sure C is clear
+     2 1A60 C8			    iny
+Source: playlzs16u.asm
+    16 1A61 8D 53 1A		    sta     SMSet_CMP+1  ; Store in "copy length"
+    18 1A64			CopyStoreCH:
+    19 1A64 EE 68 1A		    inc     SMSet_CHRLo+1
+    20 1A67			SMSet_CHRLo    
+    21 1A67 AD 00 15		    lda     LZSSBuffers+5*256 ; Now, read old data, jump to data store ; (low byte must be reset on init !)
+    23 1A6A			store:
+    25 1A6A 9D 00 15		    sta     LZSSBuffers+5*256,x
+    26 1A6D			skip_chn    
+Source: playlzs16u.asm
+   276 1A6D			    DecodeChannel 4
+Macro: DECODECHANNEL [Source: playlzs16u.asm]
+     1 1A6D 4E 06 19		    lsr     LZS.chn_bits        ; TODO: use SM code to set a branch ?
+     2 1A70 B0 1E		    bcs     skip_chn            ; C=1 : skip this channel
+     4 1A72 AD 8B 1A		    lda     SMSet_CHRLo+1
+     5 1A75			SMSet_CMP    
+     6 1A75 C9 FF		    cmp     #$ff                ; (must be reset on init!)
+     7 1A77			SMSet_Branch:    
+     8 1A77 D0 0E		    bne     CopyStoreCH
+    10 1A79 20 09 19		    jsr     DecodeBufferBytes
+    11 1A7C B0 0F		    bcs     store               ; Bit = 1 is "literal", bit = 0 is "match"
+    13 1A7E 8D 8B 1A		    sta     SMSet_CHRLo+1       ; Store in "copy pos"
+     1 1A81 71 00		    adc     (ZPLZS.SongPtr),y     ;// make sure C is clear
+     2 1A83 C8			    iny
+Source: playlzs16u.asm
+    16 1A84 8D 76 1A		    sta     SMSet_CMP+1  ; Store in "copy length"
+    18 1A87			CopyStoreCH:
+    19 1A87 EE 8B 1A		    inc     SMSet_CHRLo+1
+    20 1A8A			SMSet_CHRLo    
+    21 1A8A AD 00 14		    lda     LZSSBuffers+4*256 ; Now, read old data, jump to data store ; (low byte must be reset on init !)
+    23 1A8D			store:
+    25 1A8D 9D 00 14		    sta     LZSSBuffers+4*256,x
+    26 1A90			skip_chn    
+Source: playlzs16u.asm
+   277 1A90			    DecodeChannel 3
+Macro: DECODECHANNEL [Source: playlzs16u.asm]
+     1 1A90 4E 06 19		    lsr     LZS.chn_bits        ; TODO: use SM code to set a branch ?
+     2 1A93 B0 1E		    bcs     skip_chn            ; C=1 : skip this channel
+     4 1A95 AD AE 1A		    lda     SMSet_CHRLo+1
+     5 1A98			SMSet_CMP    
+     6 1A98 C9 FF		    cmp     #$ff                ; (must be reset on init!)
+     7 1A9A			SMSet_Branch:    
+     8 1A9A D0 0E		    bne     CopyStoreCH
+    10 1A9C 20 09 19		    jsr     DecodeBufferBytes
+    11 1A9F B0 0F		    bcs     store               ; Bit = 1 is "literal", bit = 0 is "match"
+    13 1AA1 8D AE 1A		    sta     SMSet_CHRLo+1       ; Store in "copy pos"
+     1 1AA4 71 00		    adc     (ZPLZS.SongPtr),y     ;// make sure C is clear
+     2 1AA6 C8			    iny
+Source: playlzs16u.asm
+    16 1AA7 8D 99 1A		    sta     SMSet_CMP+1  ; Store in "copy length"
+    18 1AAA			CopyStoreCH:
+    19 1AAA EE AE 1A		    inc     SMSet_CHRLo+1
+    20 1AAD			SMSet_CHRLo    
+    21 1AAD AD 00 13		    lda     LZSSBuffers+3*256 ; Now, read old data, jump to data store ; (low byte must be reset on init !)
+    23 1AB0			store:
+    25 1AB0 9D 00 13		    sta     LZSSBuffers+3*256,x
+    26 1AB3			skip_chn    
+Source: playlzs16u.asm
+   278 1AB3			    DecodeChannel 2
+Macro: DECODECHANNEL [Source: playlzs16u.asm]
+     1 1AB3 4E 06 19		    lsr     LZS.chn_bits        ; TODO: use SM code to set a branch ?
+     2 1AB6 B0 1E		    bcs     skip_chn            ; C=1 : skip this channel
+     4 1AB8 AD D1 1A		    lda     SMSet_CHRLo+1
+     5 1ABB			SMSet_CMP    
+     6 1ABB C9 FF		    cmp     #$ff                ; (must be reset on init!)
+     7 1ABD			SMSet_Branch:    
+     8 1ABD D0 0E		    bne     CopyStoreCH
+    10 1ABF 20 09 19		    jsr     DecodeBufferBytes
+    11 1AC2 B0 0F		    bcs     store               ; Bit = 1 is "literal", bit = 0 is "match"
+    13 1AC4 8D D1 1A		    sta     SMSet_CHRLo+1       ; Store in "copy pos"
+     1 1AC7 71 00		    adc     (ZPLZS.SongPtr),y     ;// make sure C is clear
+     2 1AC9 C8			    iny
+Source: playlzs16u.asm
+    16 1ACA 8D BC 1A		    sta     SMSet_CMP+1  ; Store in "copy length"
+    18 1ACD			CopyStoreCH:
+    19 1ACD EE D1 1A		    inc     SMSet_CHRLo+1
+    20 1AD0			SMSet_CHRLo    
+    21 1AD0 AD 00 12		    lda     LZSSBuffers+2*256 ; Now, read old data, jump to data store ; (low byte must be reset on init !)
+    23 1AD3			store:
+    25 1AD3 9D 00 12		    sta     LZSSBuffers+2*256,x
+    26 1AD6			skip_chn    
+Source: playlzs16u.asm
+   279 1AD6			    DecodeChannel 1
+Macro: DECODECHANNEL [Source: playlzs16u.asm]
+     1 1AD6 4E 06 19		    lsr     LZS.chn_bits        ; TODO: use SM code to set a branch ?
+     2 1AD9 B0 1E		    bcs     skip_chn            ; C=1 : skip this channel
+     4 1ADB AD F4 1A		    lda     SMSet_CHRLo+1
+     5 1ADE			SMSet_CMP    
+     6 1ADE C9 FF		    cmp     #$ff                ; (must be reset on init!)
+     7 1AE0			SMSet_Branch:    
+     8 1AE0 D0 0E		    bne     CopyStoreCH
+    10 1AE2 20 09 19		    jsr     DecodeBufferBytes
+    11 1AE5 B0 0F		    bcs     store               ; Bit = 1 is "literal", bit = 0 is "match"
+    13 1AE7 8D F4 1A		    sta     SMSet_CHRLo+1       ; Store in "copy pos"
+     1 1AEA 71 00		    adc     (ZPLZS.SongPtr),y     ;// make sure C is clear
+     2 1AEC C8			    iny
+Source: playlzs16u.asm
+    16 1AED 8D DF 1A		    sta     SMSet_CMP+1  ; Store in "copy length"
+    18 1AF0			CopyStoreCH:
+    19 1AF0 EE F4 1A		    inc     SMSet_CHRLo+1
+    20 1AF3			SMSet_CHRLo    
+    21 1AF3 AD 00 11		    lda     LZSSBuffers+1*256 ; Now, read old data, jump to data store ; (low byte must be reset on init !)
+    23 1AF6			store:
+    25 1AF6 9D 00 11		    sta     LZSSBuffers+1*256,x
+    26 1AF9			skip_chn    
+Source: playlzs16u.asm
+   280 1AF9			    DecodeChannel 0
+Macro: DECODECHANNEL [Source: playlzs16u.asm]
+     1 1AF9 4E 06 19		    lsr     LZS.chn_bits        ; TODO: use SM code to set a branch ?
+     2 1AFC B0 1E		    bcs     skip_chn            ; C=1 : skip this channel
+     4 1AFE AD 17 1B		    lda     SMSet_CHRLo+1
+     5 1B01			SMSet_CMP    
+     6 1B01 C9 FF		    cmp     #$ff                ; (must be reset on init!)
+     7 1B03			SMSet_Branch:    
+     8 1B03 D0 0E		    bne     CopyStoreCH
+    10 1B05 20 09 19		    jsr     DecodeBufferBytes
+    11 1B08 B0 0F		    bcs     store               ; Bit = 1 is "literal", bit = 0 is "match"
+    13 1B0A 8D 17 1B		    sta     SMSet_CHRLo+1       ; Store in "copy pos"
+     1 1B0D 71 00		    adc     (ZPLZS.SongPtr),y     ;// make sure C is clear
+     2 1B0F C8			    iny
+Source: playlzs16u.asm
+    16 1B10 8D 02 1B		    sta     SMSet_CMP+1  ; Store in "copy length"
+    18 1B13			CopyStoreCH:
+    19 1B13 EE 17 1B		    inc     SMSet_CHRLo+1
+    20 1B16			SMSet_CHRLo    
+    21 1B16 AD 00 10		    lda     LZSSBuffers+0*256 ; Now, read old data, jump to data store ; (low byte must be reset on init !)
+    23 1B19			store:
+    25 1B19 9D 00 10		    sta     LZSSBuffers+0*256,x
+    26 1B1C			skip_chn    
+Source: playlzs16u.asm
+   281 1B1C 20 17 19		    jsr     UpdateLZSPtr
+   282
+   283 1B1F EE 04 19		    inc     LZS.DstBufOffset
+   284
+   285 1B22			SMSet_PlayCounter
+   286 1B22 A2 FF		    ldx     #$ff
+   287 1B24 CA			    dex
+   288 1B25 F0 03		    beq     @NoMoreFrame
+   289 1B27 4C D3 19		    jmp     LZSSPlay1Frame
+   290 1B2A			@NoMoreFrame
+   291 1B2A 60			    rts
+   292
+   293 				;//##########################################################################
+   294 				;//--- out Z flag: clear = end of song
+   295
+   296 1B2B			LZSSCheckEndOfSong
+   297 				    //--- check end of song
+   298 1B2B A5 01		    lda     ZPLZS.SongPtr + 1
+   299 1B2D CD 03 19		    cmp     LZS.SongEndPtr+1
+   300 1B30 D0 07		    bne     @NotEnd
+   301 1B32 A5 00		    lda     ZPLZS.SongPtr
+   302 1B34 CD 02 19		    cmp     LZS.SongEndPtr
+   303 1B37 D0 00		    bne     @NotEnd
+   304 1B39			@NotEnd    
+   305 1B39 60			    rts
+   306
+   307 				;//##########################################################################
+   308 				//--- send decompressed data to pokey
+   309
+   310 1B3A			LZSSUpdatePokeyRegisters
+   311 				    //--- get offset into decoded buffers where lasts bytes were written to
+   312 1B3A AE 08 19		    ldx     LZS.DLIDstBufOffset
+   313 1B3D EE 08 19		    inc     LZS.DLIDstBufOffset
+   314
+   315 				    ;//--- always update first register because always part of the compressed data
+   316 1B40 BD 00 10		    lda    LZSSBuffers+0*256,x   
+   317 				       
+   318 				;	sta    POKEY+0
+   319 1B43 8D 50 1C		    sta SDWPOK0				;// edit by VinsCool: write to POKEY buffer for VUPlayer's timing and VUMeter display
+   320 				    
+   321 				    //---
+   322 1B46			UpdatePokeyRegisters1
+   323 				.REPT 8 #
+   324 				    LDA    LZSSBUFFERS+(#+1)*256,X    
+   325 				SMSET_WRITEPOKEY:1
+   328 				    STA SDWPOK0+(#+1) 			
+   330 				.ENDR  
+   330 				.ENDR  
+Source: REPT
+   324 1B46 BD 00 11		    LDA    LZSSBUFFERS+(#+1)*256,X    
+   324 1B49			SMSET_WRITEPOKEY0
+   324 1B49 8D 51 1C		    STA SDWPOK0+(#+1) 			
+   324 1B4C BD 00 12		    LDA    LZSSBUFFERS+(#+1)*256,X    
+   324 1B4F			SMSET_WRITEPOKEY1
+   324 1B4F 8D 52 1C		    STA SDWPOK0+(#+1) 			
+   324 1B52 BD 00 13		    LDA    LZSSBUFFERS+(#+1)*256,X    
+   324 1B55			SMSET_WRITEPOKEY2
+   324 1B55 8D 53 1C		    STA SDWPOK0+(#+1) 			
+   324 1B58 BD 00 14		    LDA    LZSSBUFFERS+(#+1)*256,X    
+   324 1B5B			SMSET_WRITEPOKEY3
+   324 1B5B 8D 54 1C		    STA SDWPOK0+(#+1) 			
+   324 1B5E BD 00 15		    LDA    LZSSBUFFERS+(#+1)*256,X    
+   324 1B61			SMSET_WRITEPOKEY4
+   324 1B61 8D 55 1C		    STA SDWPOK0+(#+1) 			
+   324 1B64 BD 00 16		    LDA    LZSSBUFFERS+(#+1)*256,X    
+   324 1B67			SMSET_WRITEPOKEY5
+   324 1B67 8D 56 1C		    STA SDWPOK0+(#+1) 			
+   324 1B6A BD 00 17		    LDA    LZSSBUFFERS+(#+1)*256,X    
+   324 1B6D			SMSET_WRITEPOKEY6
+   324 1B6D 8D 57 1C		    STA SDWPOK0+(#+1) 			
+   324 1B70 BD 00 18		    LDA    LZSSBUFFERS+(#+1)*256,X    
+   324 1B73			SMSET_WRITEPOKEY7
+   324 1B73 8D 58 1C		    STA SDWPOK0+(#+1) 			
+Source: playlzs16u.asm
+   331
+   332 1B76 60			    rts  
+   333
+   334
+    46
+    47 				;-----------------
+    48
+    49 				;//---------------------------------------------------------------------------------------------
+    50 				               
+    51 				;* Several subroutines added for VUPlayer have been split to become part of the driver itself, allowing new features for future projects easily!
+    52
+    53 				;-----------------
+    54
+    55 				;* Song index initialisation subroutine, load pointers using index number, as well as loop point when it exists 
+    56 				           
+    57 1B77			SetNewSongPtrsFull 			; if the routine is called from this label, index and loop are restarted
+    58 1B77 A2 00			ldx #0
+    59 1B79 8E B9 1B			stx is_fadeing_out		; reset fadeout flag, the new index is loaded from start
+    60 1B7C E8				inx
+    61 1B7D 8E 87 1B			stx is_looping 			; reset the loop counter, the new index is loaded from start 
+    62 1B80			SetNewSongPtrs 				; if the routine is called from this label, it will use the current parameters instead 
+    63 1B80 A9 00			lda #0				; current tune index, must be set before the routine is executed
+    64 = 1B81				SongIdx equ *-1 
+    65 1B82 0A				asl @				; multiply by 2, for the hi and lo bytes of each address 
+    66 1B83 AA				tax 
+    67 1B84 A0 FC			ldy #$FC			; offset ahead for overwriting, saves 1 CPY #4 instruction for each loop iteration 
+    68 1B86 A9 01			lda #1				; is the 'loop' flag set?
+    69 = 1B87				is_looping equ *-1
+    70 1B88 30 14			bmi DontSet			; loop point initialised, there is nothing else to do 
+    71 1B8A F0 18			beq SetNewLoopPtrs		; load the loop subtune pointers 
+    72 1B8C			SetNewSongPtrs_a
+    73 1B8C BD 31 25			lda SongsIndexStart,x
+    74 1B8F 99 04 18			sta LZS.SongEndPtr+1-$FF,y 	; 1 page behind to adjust with Y 
+    75 1B92 E8				inx
+    76 1B93 C8				iny
+    77 1B94 30 F6			bmi SetNewSongPtrs_a 		; Y < 0, loop, for 4 values to write 	
+    78 1B96 CE 87 1B			dec is_looping			; 1 -> 0 
+    79 1B99 20 7A 1C			jsr check_loop_for_dummies	; carry flag will be returned
+    80 1B9C 90 E2			bcc SetNewSongPtrs		; carry clear -> dummy, skip the part altogether and play the looped section
+    81 1B9E			DontSet	
+    82 1B9E A9 00			lda #0
+    83 1BA0 8D 07 19			sta LZS.Initialized		; reset the state of the LZSS driver to not initialised so it can play the next tune or loop 
+    84 1BA3 60				rts 	
+    85 1BA4			SetNewLoopPtrs 
+    86 1BA4 BD 39 25			lda LoopsIndexStart,x
+    87 1BA7 99 04 18			sta LZS.SongEndPtr+1-$FF,y 	; 1 page behind to adjust with Y 
+    88 1BAA E8				inx
+    89 1BAB C8				iny
+    90 1BAC 30 F6			bmi SetNewLoopPtrs 		; Y < 0, loop, for 4 values to write 
+    91 1BAE CE 87 1B			dec is_looping			; 0 -> FF 
+    92 1BB1 20 7A 1C			jsr check_loop_for_dummies	; carry flag will be returned
+    93 1BB4 B0 E8			bcs DontSet			; carry set -> not a dummy, continue playing
+    94 1BB6 90 40			bcc stop_toggle			; else, the tune is a dummy, and should be stopped immediately 
+    95
+    96 				;-----------------
+    97
+    98 				;* Volume fadeout subroutine
+    99
+   100 1BB8			fade_volume_loop 
+   101 1BB8 A9 00			lda #0			; fadeing out timer and flag
+   102 = 1BB9				is_fadeing_out equ *-1 
+   103 1BBA F0 31			beq fade_volume_done	; equal 0 means it is not set, and must be skipped
+   104 1BBC 10 05			bpl continue_fadeout	; above 0 means it is already set, skip initialising again 
+   105 1BBE			begin_fadeout			; below 0 means it is set, and must be initialised first 
+   106 1BBE A9 01			lda #1			; unit of volume to subtract
+   107 1BC0 8D B9 1B			sta is_fadeing_out	; flag and initial fade volume set
+   108 1BC3			continue_fadeout	
+   109 1BC3 A0 07			ldy #7			; index from the 4th AUDC 
+   110 1BC5			fade_volume_loop_a
+   111 1BC5 B9 50 1C			lda SDWPOK0,y		; current POKEY buffer
+   112 1BC8 AA				tax			; backup for the next step
+   113 1BC9 29 0F			and #$0F		; keep only the volume values
+   114 1BCB 38				sec			; set carry for the subtraction
+   115 1BCC ED B9 1B			sbc is_fadeing_out	; subtract the fading value directly
+   116 1BCF F0 0E			beq volume_loop_again	; if value = 0, write that value directly
+   117 1BD1 10 04			bpl set_new_volume	; else if the subtraction did not overflow, continue with the next step
+   118 1BD3 A9 00			lda #0			; else, set the volume to 0 
+   119 1BD5 F0 08			beq volume_loop_again	; unconditional 
+   120 1BD7			set_new_volume	
+   121 1BD7 8D DE 1B			sta ora_volume		; this value will be used for the ORA instruction 
+   122 1BDA 8A				txa			; get back the AUDC value loaded a moment before
+   123 1BDB 29 F0			and #$F0		; only keep the Distortion bits
+   124 1BDD 09 00			ora #0			; combine the new volume to it
+   125 = 1BDE				ora_volume equ *-1
+   126 1BDF			volume_loop_again
+   127 1BDF 99 50 1C			sta SDWPOK0,y		; write the new AUDC value in memory for later
+   128 1BE2 88 88			:2 dey			; decrement twice to only load the AUDC
+   129 1BE4 10 DF			bpl fade_volume_loop_a	; continue this loop until Y overflows to $FF 
+   130 				;	lda RTCLOK+2 		; I wanted to use RTCLOK+2, but it doesn't work for some reason...
+   131 1BE6 AD 9D 1C			lda v_frame		; frame counter from the time display routine
+   132 1BE9 29 0F			and #$0F		; every 15 frames
+   133 1BEB F0 01			beq fade_increment	; if not 0, skip
+   134 1BED			fade_volume_done
+   135 1BED 60				rts
+   136 1BEE			fade_increment
+   137 1BEE EE B9 1B			inc is_fadeing_out	; increment the fadeout value to subtract by 1 
+   138 1BF1 AD B9 1B			lda is_fadeing_out	; load that value for the comparison 
+   139 1BF4 C9 0B			cmp #11			; 10 seconds must have passed to reach 10 units
+   140 1BF6 90 F5			bcc fade_volume_done	; if the value is below the count, done 
+   141 				;	jmp stop_toggle		; else, stop the player once the end of the fadeout is reached 
+   142
+   143 				;-----------------
+   144
+   145 				;* Toggle Stop, similar to pause, except Play will restart the tune from the beginning
+   146 				;* The routine will continue into the following subroutines, a RTS will be found at the end of setpokeyfull further below 
+   147
+   148 1BF8			stop_toggle 
+   149 1BF8 AD 5B 1C			lda is_playing_flag 
+   150 1BFB 10 01			bpl set_stop			; the Stop flag will be set, regardless of Playing or being Paused 
+   151 1BFD 60				rts				; otherwise, the player is stopped already 
+   152 1BFE			set_stop
+   153 1BFE A9 FF			lda #$FF
+   154 1C00 8D 5B 1C			sta is_playing_flag		; #$FF -> Stop
+   155 1C03 20 77 1B			jsr SetNewSongPtrsFull 		; TODO: fix the index code, the tune won't restart properly  
+   156 1C06 20 B9 1C			jsr reset_timer 		; clear the timer, unlike PAUSE, which would freeze the values until it is unpaused
+   157 					
+   158 				;-----------------
+   159
+   160 				;* Stop/Pause the player and reset the POKEY registers, a RTS will be found at the end of setpokeyfull further below 
+   161
+   162 1C09			stop_pause_reset
+   163 1C09 A9 00			lda #0			; default values
+   164 1C0B A0 08			ldy #8
+   165 1C0D			stop_pause_reset_a 
+   166 1C0D 99 50 1C			sta SDWPOK0,y		; clear the POKEY values in memory 
+   167 1C10 88				dey 
+   168 1C11 10 FA			bpl stop_pause_reset_a	; repeat until all channels were cleared 
+   169
+   170 				;----------------- 
+   171
+   172 				;* Setpokey, intended for double buffering the decompressed LZSS bytes as fast as possible for timing and cosmetic purpose
+   173
+   174 1C13			setpokeyfull
+   175 1C13 AD 59 1C			lda POKSKC0 
+   176 1C16 8D 0F D2			sta $D20F 
+   177 1C19 AC 58 1C			ldy POKCTL0
+   178 1C1C AD 50 1C			lda POKF0
+   179 1C1F AE 51 1C			ldx POKC0
+   180 1C22 8D 00 D2			sta $D200
+   181 1C25 8E 01 D2			stx $D201
+   182 1C28 AD 52 1C			lda POKF1
+   183 1C2B AE 53 1C			ldx POKC1
+   184 1C2E 8D 02 D2			sta $D202
+   185 1C31 8E 03 D2			stx $D203
+   186 1C34 AD 54 1C			lda POKF2
+   187 1C37 AE 55 1C			ldx POKC2
+   188 1C3A 8D 04 D2			sta $D204
+   189 1C3D 8E 05 D2			stx $D205
+   190 1C40 AD 56 1C			lda POKF3
+   191 1C43 AE 57 1C			ldx POKC3
+   192 1C46 8D 06 D2			sta $D206
+   193 1C49 8E 07 D2			stx $D207
+   194 1C4C 8C 08 D2			sty $D208
+   195 1C4F 60				rts
+   196 					
+   197 				;* Left POKEY is used by default if a Stereo setup is used 
+   198
+   199 1C50			SDWPOK0 
+   200 1C50 00			POKF0	dta $00
+   201 1C51 00			POKC0	dta $00
+   202 1C52 00			POKF1	dta $00
+   203 1C53 00			POKC1	dta $00
+   204 1C54 00			POKF2	dta $00
+   205 1C55 00			POKC2	dta $00
+   206 1C56 00			POKF3	dta $00
+   207 1C57 00			POKC3	dta $00
+   208 1C58 00			POKCTL0	dta $00
+   209 1C59 03			POKSKC0	dta $03	
+   210
+   211 				;-----------------
+   212
+   213 				; Toggle Play/Pause 
+   214
+   215 1C5A			play_pause_toggle 
+   216 1C5A A9 00			lda #0
+   217 = 1C5B				is_playing_flag equ *-1 	; #0 -> Play, #1 -> Pause, #$FF -> Stop 
+   218 1C5C F0 09			beq set_pause	
+   219 1C5E			set_play 
+   220 1C5E A9 00			lda #0				; reset the Play flag, regardless of being Paused or Stopped  
+   221 1C60 8D 5B 1C			sta is_playing_flag		; #0 -> Play
+   222 1C63 8D B9 1B			sta is_fadeing_out		; reset the fadeing out flag, in case it was set before pausing 
+   223 1C66 60				rts
+   224 1C67			set_pause 
+   225 1C67 EE 5B 1C			inc is_playing_flag		; #0 -> #1 -> Pause 
+   226 1C6A 10 9D			bpl stop_pause_reset		; clear the POKEY registers, end with a RTS
+   227 					
+   228 				;-----------------
+   229
+   230 				;* This routine provides the ability to initialise a fadeout for anything that may require a transition in a game/demo 
+   231 				;* At the end of the routine, the is_playing flag will be set to a 'stop', which will indicate the fadeout has been completed
+   232 				;* If a new tune index is loaded during a fadeout, it will be interrupted, and play the next tune like normal instead 
+   233 					
+   234 1C6C			trigger_fade_immediate 
+   235 1C6C AD 5B 1C			lda is_playing_flag	; is the player currently in 'play' mode? 
+   236 1C6F D0 08			bne trigger_fade_done	; if not, skip this subroutine, there is nothing to fadeout 
+   237 1C71 AD B9 1B			lda is_fadeing_out	; is the tune currently playing already engaged in a fadeout?
+   238 1C74 D0 03			bne trigger_fade_done	; if not 0, there is a fadeout in progress! skip this subroutine
+   239 1C76 CE B9 1B			dec is_fadeing_out	; $00 -> $FF, the fadeout flag is set
+   240 1C79			trigger_fade_done
+   241 1C79 60				rts 
+   242 					
+   243 				;-----------------
+   244
+   245 				;* Carry flag returns the status
+   246 				;* Carry Clear -> Dummy/Invalid subtune length
+   247 				;* Carry Set -> Should be perfectly fine data, unless wrong pointers were set, garbage would play!
+   248
+   249 1C7A			check_loop_for_dummies
+   250 1C7A AD 03 19			lda LZS.SongEndPtr+1
+   251 1C7D CD 01 19			cmp LZS.SongStartPtr+1
+   252 1C80 D0 09			bne dummy_check_done	; END is either above or below START, in any case, the Carry flag will tell the truth!
+   253 1C82			maybe_a_dummy	
+   254 1C82 AD 02 19			lda LZS.SongEndPtr
+   255 1C85 38				sec
+   256 1C86 ED 00 19			sbc LZS.SongStartPtr
+   257 1C89 C9 02			cmp #2			; should be short enough...
+   258 1C8B			dummy_check_done
+   259 1C8B 60				rts			; done! the carry flag will dictate what to do
+   260 				        
+   261 				;-----------------
+   262
+   263 1C8C			calculate_time 
+   264 1C8C AD 5B 1C			lda is_playing_flag 
+   265 1C8F D0 27			bne notimetolose	; not playing -> no time counter increment  
+   266 1C91 CE 9D 1C			dec v_frame		; decrement the frame counter
+   267 1C94 D0 22			bne notimetolose	; not 0 -> a second did not yet pass
+   268 1C96 A9 00			lda #0
+   269 = 1C97			framecount equ *-1		; 50 or 60, defined by the region initialisation
+   270 1C98 8D 9D 1C			sta v_frame		; reset the frame counter
+   271 1C9B D0 01			bne addasecond		; unconditional
+   272 1C9D EA				nop
+   273 = 1C9D			v_frame equ *-1			; the NOP instruction is overwritten by the frame counter	
+   274 1C9E			addasecond
+   275 1C9E F8				sed			; set decimal flag first
+   276 1C9F A9 00			lda #0
+   277 = 1CA0			v_second equ *-1
+   278 1CA1 18				clc			; clear the carry flag first, the keyboard code could mess with this part now...
+   279 1CA2 69 01			adc #1			; carry flag is clear, add 1 directly
+   280 1CA4 8D A0 1C			sta v_second
+   281 1CA7 C9 60			cmp #$60		; 60 seconds, must be a HEX value!
+   282 1CA9 D0 0C			bne cleardecimal 	; if not equal, no minute increment
+   283 1CAB A0 00			ldy #0			; will be used to clear values quicker
+   284 1CAD			addaminute
+   285 1CAD A9 00			lda #0
+   286 = 1CAE			v_minute equ *-1
+   287 1CAF 69 00			adc #0			; carry flag is set above, adding 0 will add 1 instead
+   288 1CB1 8D AE 1C			sta v_minute
+   289 1CB4 8C A0 1C			sty v_second		; reset the second counter
+   290 1CB7			cleardecimal 
+   291 1CB7 D8				cld			; clear decimal flag 
+   292 1CB8			notimetolose
+   293 1CB8 60				rts
+   294 					
+   295 				;-----------------
+   296
+   297 1CB9			reset_timer
+   298 1CB9 A9 00			lda #0
+   299 1CBB 8D A0 1C			sta v_second		; reset the seconds counter
+   300 1CBE 8D AE 1C			sta v_minute		; reset the minutes counter
+   301 1CC1 AD 97 1C			lda framecount		; number of frames defined at initialisation  
+   302 1CC4 8D 9D 1C			sta v_frame		; reset the frames counter 
+   303 1CC7 60				rts
+   304 					
+   305 				;-----------------
+   306
+   307 				;//---------------------------------------------------------------------------------------------
+   308
+   309 				;* To be able to use all the subroutines, include lzssp.asm in the project that may use the driver, 
+   310 				;* Alternatively, include the code directly below  
+   311 				;* The ORG addresses could be changed or even omitted if necessary! 
+   312 					
+   313 				;	org SOUNDTEST			
+   314 1CC8				icl "DUMB_Soundtest.asm"	; example program by VinsCool 
+Source: DUMB_Soundtest.asm
+     1 				;* --- Dumb Unless Made Better ---
+     2 				;*
+     3 				;* DUMB Soundtest-LZSS v0.1
+     4 				;*
+     5 				;* An attempt for a flexible LZSS music driver for the Atari 8-bit
+     6 				;* By VinsCool, being worked on from July 27th to July 30th 2022 
+     7 				;*
+     8 				;* To build: 'mads lzssp.asm -l:ASSEMBLED/build.lst -o:ASSEMBLED/build.xex' 
+     9
+    10 				;-----------------
+    11
+    12 				;//---------------------------------------------------------------------------------------------
+    13
+    14 = 00FE			DISPLAY 	equ $FE		; Display List indirect memory address
+    15
+    16 				;* Subtune index number is offset by 1, meaning the subtune 0 would be subtune 1 visually
+    17
+    18 = 0003			TUNE_NUM	equ 3 		; Bunny Hop music by PG 
+    19
+    20 				;* Sound effects index number will be displayed the same way for simplicity
+    21
+    22 = 000A			SFX_NUM		equ 10		; Bunny Hop SFX by PG 
+    23
+    24 				;-----------------
+    25
+    26 				;//---------------------------------------------------------------------------------------------
+    27
+    28 				;* Initialisation, then loop infinitely unless the program is told otherwise 
+    29
+    30 1CC8			start       
+    31 1CC8 A2 00			ldx #0			; disable playfield and the black colour value
+    32 1CCA 8E 2F 02			stx SDMCTL		; write to Shadow Direct Memory Access Control address
+    33 1CCD 20 90 1D			jsr wait_vblank		; wait for vblank before continuing
+    34 1CD0 8E C8 02			stx COLOR4		; Shadow COLBK (background colour), black
+    35 1CD3 8E C6 02			stx COLOR2		; Shadow COLPF2 (playfield colour 2), black
+    36 1CD6 A9 12 8D 30 02 A9 + 	mwa #dlist SDLSTL	; Start Address of the Display List
+    37 1CE0 8E 81 1B			stx SongIdx 		; default tune index number
+    38 1CE3 8E 5D 1F			stx SfxIdx 		; default sfx index number
+    39 1CE6 20 08 20			jsr set_index_count 	; print number of tunes and sfx indexed in memory
+    40 1CE9 20 CC 1F			jsr set_tune_name	; print the tune name 
+    41 1CEC 20 E3 1F			jsr set_sfx_name	; print the sfx name
+    42 1CEF 20 09 1C			jsr stop_pause_reset	; clear the POKEY registers first 
+    43 1CF2 20 77 1B			jsr SetNewSongPtrsFull	; initialise the LZSS driver with the song pointer using default values always 
+    44 1CF5 20 25 1E			jsr detect_region
+    45 1CF8 20 B9 1C			jsr reset_timer	
+    46 1CFB CE 2B 1D			dec play_skip 		; initialise the PAL/NTSC condition, player is skipped every 6th frame in NTSC 
+    47 1CFE A2 22			ldx #$22		; DMA enable, normal playfield
+    48 1D00 8E 2F 02			stx SDMCTL		; write to Shadow Direct Memory Access Control address
+    49 1D03 A2 32			ldx #50	
+    50 1D05			wait_init   
+    51 1D05 20 90 1D			jsr wait_vblank		; wait for vblank => 50 frames
+    52 1D08 CA				dex			; decrement index x
+    53 1D09 D0 FA			bne wait_init		; repeat until x = 0, total wait time is ~2 seconds
+    54 1D0B			init_done
+    55 1D0B 78				sei			; Set Interrupt Disable Status
+    56 1D0C AD 22 02 8D 10 25 + 	mwa VVBLKI oldvbi       ; vbi address backup
+    57 1D18 A9 2A 8D 22 02 A9 + 	mwa #vbi VVBLKI		; write our own vbi address to it 
+    58 1D22 A9 40 8D 0E D4		mva #$40 NMIEN		; enable vbi interrupts
+    59 					
+    60 				;-----------------
+    61
+    62 				;//---------------------------------------------------------------------------------------------
+    63
+    64 				;* Mainloop, anything that could run while the screen is drawing 
+    65
+    66 1D27			loop
+    67 1D27 4C 27 1D			jmp loop		; infinitely
+    68 					
+    69 				;----------------- 
+    70
+    71 				;//---------------------------------------------------------------------------------------------
+    72
+    73 				;* VBI loop, run through all the code that is needed, then return with a RTI 
+    74
+    75 1D2A			vbi 
+    76 1D2A A2 00			ldx #0				; PAL/NTSC adjustment flag 
+    77 = 1D2B			play_skip equ *-1
+    78 1D2C 30 0F			bmi do_play_always		; #$FF -> PAL region was detected 
+    79 1D2E F0 06			beq dont_play_this_frame	; #0 -> NTSC region was detected, skip the player call for this frame 
+    80 1D30 CA				dex 				; decrement the counter for the next frame
+    81 1D31 8E 2B 1D			stx play_skip 			; and overwrite the value 
+    82 1D34 10 07			bpl do_play_always		; unconditional, this frame will be played
+    83 1D36			dont_play_this_frame
+    84 1D36 A9 05			lda #5				; reset the counter 
+    85 1D38 8D 2B 1D			sta play_skip
+    86 1D3B 10 21			bpl check_key_pressed 		; and skip this frame 
+    87 1D3D			do_play_always 
+    88 1D3D 20 13 1C			jsr setpokeyfull		; update the POKEY registers first, for both the SFX and LZSS music driver 
+    89 1D40			do_play
+    90 1D40 AD 5B 1C			lda is_playing_flag 		; 0 -> is playing, else it is either stopped or paused 
+    91 1D43 D0 16			bne do_sfx			; in this case, nothing will happen until it is changed back to 0 
+    92 1D45 20 C2 19			jsr LZSSPlayFrame		; Play 1 LZSS frame
+    93 1D48 20 3A 1B			jsr LZSSUpdatePokeyRegisters	; buffer to let setpokeyfast match the RMT timing 
+    94 1D4B 20 B8 1B			jsr fade_volume_loop		; run the fadeing out code from here until it's finished
+    95 1D4E AD 5B 1C			lda is_playing_flag		; was the player paused/stopped after fadeing out?
+    96 1D51 D0 08			bne do_sfx			; if not equal, it was most likely stopped, and so there is nothing else to do here 
+    97 1D53 20 2B 1B			jsr LZSSCheckEndOfSong		; is the current LZSS index done playing?
+    98 1D56 D0 03			bne do_sfx			; if not, go back to the loop and wait until the next call
+    99 1D58 20 80 1B			jsr SetNewSongPtrs		; update the subtune index for the next one in adjacent memory 
+   100 1D5B			do_sfx
+   101 1D5B 20 7A 1F			jsr play_sfx			; process the SFX data, if an index is queued and ready to play for this frame 
+   102 					
+   103 				;-----------------
+   104
+   105 1D5E			check_key_pressed 
+   106 1D5E AE 0F D2			ldx SKSTAT		; Serial Port Status
+   107 1D61 8A				txa
+   108 1D62 29 04			and #$04		; last key still pressed?
+   109 1D64 D0 16			bne continue		; if not, skip ahead, no input to check 
+   110 1D66 AD 09 D2			lda KBCODE		; Keyboard Code  
+   111 1D69 29 3F			and #$3F		; clear the SHIFT and CTRL bits out of the key identifier for the next part
+   112 1D6B A8				tay
+   113 1D6C 8A				txa
+   114 1D6D 29 08			and #$08		; SHIFT key being held?
+   115 1D6F F0 04			beq skip_held_key_check	; if yes, skip the held key flag check, else, verify if the last key is still being held
+   116 1D71			check_keys_always
+   117 1D71 A9 00			lda #0 			; was the last key pressed also held for at least 1 frame? This is a measure added to prevent accidental input spamming
+   118 = 1D72				held_key_flag equ *-1
+   119 1D73 30 0C			bmi continue_b		; the held key flag was set if the value is negative! skip ahead immediately in this case 
+   120 1D75			skip_held_key_check
+   121 1D75 20 25 20			jsr check_keys		; each 'menu' entry will process its action, and return with RTS, the 'held key flag' must then be set!
+   122 1D78 A2 FF			ldx #$FF
+   123 1D7A 30 02			bmi continue_a		; skip ahead and set the held key flag! 
+   124 1D7C			continue			; do everything else during VBI after the keyboard checks 
+   125 1D7C A2 00			ldx #0			; reset the held key flag! 
+   126 1D7E			continue_a 			; a new held key flag is set when jumped directly here
+   127 1D7E 8E 72 1D			stx held_key_flag 
+   128 1D81			continue_b 			; a key was detected as held when jumped directly here 
+   129 1D81 20 42 1E			jsr print_player_infos	; print most of the stuff on screen using printhex or printinfo in bulk 	
+   130 1D84 20 8C 1C			jsr calculate_time 	; update the timer, this one is actually necessary, so even with DMA off, it will be executed
+   131 1D87 20 CA 1E			jsr check_joystick	; check the inputs for tunes and sfx index 
+   132 1D8A			return_from_vbi	
+   133 1D8A 68				pla			;* since we're in our own vbi routine, pulling all values manually is required! 
+   134 1D8B A8				tay
+   135 1D8C 68				pla
+   136 1D8D AA				tax
+   137 1D8E 68				pla
+   138 1D8F 40				rti			; return from interrupt, this ends the VBI time, whenever it actually is "finished" 
+   139
+   140 				;-----------------
+   141
+   142 				;//---------------------------------------------------------------------------------------------
+   143
+   144 				;* Everything below this point is either stand alone subroutines that can be called at any time, and the display list 
+   145
+   146 				;//---------------------------------------------------------------------------------------------
+   147
+   148 				;* Wait for vblank subroutine
+   149
+   150 1D90			wait_vblank 
+   151 1D90 A5 14			lda RTCLOK+2		; load the real time frame counter to accumulator
+   152 1D92			wait        
+   153 1D92 C5 14			cmp RTCLOK+2		; compare to itself
+   154 1D94 F0 FC			beq wait		; equal means it vblank hasn't began
+   155 1D96 60				rts
+   156
+   157 				;-----------------
+   158
+   159 				; Print text from data tables, useful for many things 
+   160
+   161 1D97			printinfo 
+   162 1D97 8C A4 1D			sty charbuffer
+   163 1D9A A0 00			ldy #0
+   164 1D9C			do_printinfo
+   165 1D9C BD FF FF		        lda $ffff,x
+   166 = 1D9D			infosrc equ *-2
+   167 1D9F 91 FE			sta (DISPLAY),y
+   168 1DA1 E8				inx
+   169 1DA2 C8				iny 
+   170 1DA3 C0 00			cpy #0
+   171 = 1DA4			charbuffer equ *-1
+   172 1DA5 D0 F5			bne do_printinfo 
+   173 1DA7 60				rts
+   174
+   175 				;-----------------
+   176
+   177 				; Print hex characters for several things, useful for displaying all sort of debugging infos
+   178 					
+   179 1DA8			printhex
+   180 1DA8 A0 00			ldy #0
+   181 1DAA			printhex_direct     ; workaround to allow being addressed with y in different subroutines
+   182 1DAA 48				pha
+   183 1DAB 4A 4A 4A 4A			:4 lsr @
+   184 					;beq ph1    ; comment out if you want to hide the leftmost zeroes
+   185 1DAF AA				tax
+   186 1DB0 BD C0 1D			lda hexchars,x
+   187 1DB3			ph1	
+   188 1DB3 91 FE C8		        sta (DISPLAY),y+
+   189 1DB6 68				pla
+   190 1DB7 29 0F			and #$f
+   191 1DB9 AA				tax
+   192 1DBA BD C0 1D 91 FE		mva hexchars,x (DISPLAY),y
+   193 1DBF 60				rts
+   194 1DC0			hexchars 
+   195 1DC0 10 11 12 13 14 15 +         dta d"0123456789ABCDEF"
+   196
+   197 				;-----------------
+   198
+   199 				;* Convert Hexadecimal numbers to Decimal without lookup tables 
+   200 				;* Based on the routine created by Andrew Jacobs, 28-Feb-2004 
+   201 				;* http://6502.org/source/integers/hex2dec-more.htm 
+   202
+   203 1DD0			hex2dec_convert
+   204 1DD0 C9 0A			cmp #10			; below 10 -> 0 to 9 inclusive will display like expected, skip the conversion
+   205 1DD2 90 2E			bcc hex2dec_convert_b
+   206 1DD4 C9 64			cmp #100		; process with numbers below 99, else skip the conversion entirely 
+   207 1DD6 B0 2A			bcs hex2dec_convert_b  
+   208 1DD8			hex2dec_convert_a
+   209 1DD8 8D 05 1E			sta hex_num		; temporary 
+   210 1DDB F8				sed
+   211 1DDC A9 00			lda #0			; initialise the conversion values
+   212 1DDE 8D 03 1E			sta dec_num
+   213 1DE1 8D 04 1E			sta dec_num+1
+   214 1DE4 A2 07			ldx #7			; 8 bits to process 
+   215 1DE6			hex2dec_loop
+   216 1DE6 0E 05 1E			asl hex_num 
+   217 1DE9 AD 03 1E			lda dec_num		; And add into result
+   218 1DEC 6D 03 1E			adc dec_num
+   219 1DEF 8D 03 1E			sta dec_num
+   220 1DF2 AD 04 1E			lda dec_num+1		; propagating any carry
+   221 1DF5 6D 04 1E			adc dec_num+1
+   222 1DF8 8D 04 1E			sta dec_num+1
+   223 1DFB CA				dex			; And repeat for next bit
+   224 1DFC 10 E8			bpl hex2dec_loop
+   225 1DFE D8				cld			; Back to binary
+   226 1DFF AD 03 1E			lda dec_num 
+   227 1E02			hex2dec_convert_b
+   228 1E02 60				rts			; the value will be returned in the accumulator 
+   229
+   230 1E03 00 00		dec_num dta $00,$00
+   231 1E05 00			hex_num dta $00
+   232 					
+   233 				;-----------------
+   234
+   235 				; Stop and quit when execution jumps here
+   236
+   237 1E06			stop_and_exit
+   238 1E06 20 09 1C			jsr stop_pause_reset 
+   239 1E09 AD 10 25 8D 22 02 + 	mwa oldvbi VVBLKI	; restore the old vbi address
+   240 1E15 A2 00			ldx #$00		; disable playfield 
+   241 1E17 8E 2F 02			stx SDMCTL		; write to Direct Memory Access (DMA) Control register
+   242 1E1A CA				dex			; underflow to #$FF
+   243 1E1B 8E FC 02			stx CH			; write to the CH register, #$FF means no key pressed
+   244 1E1E 58				cli			; this may be why it seems to crash on hardware... I forgot to clear the interrupt bit!
+   245 1E1F 20 90 1D			jsr wait_vblank		; wait for vblank before continuing
+   246 1E22 6C 0A 00			jmp (DOSVEC)		; return to DOS, or Self Test by default
+   247
+   248 				;----------------- 
+   249
+   250 				;* Detect the machine region subroutine
+   251
+   252 1E25			detect_region	
+   253 1E25 AD 0B D4			lda VCOUNT
+   254 1E28 F0 03			beq check_region	; vcount = 0, go to check_region and compare values
+   255 1E2A AA				tax			; backup the value in index y
+   256 1E2B D0 F8			bne detect_region 	; repeat 
+   257 1E2D			check_region
+   258 1E2D E0 9B			cpx #$9B		; compare X to 155
+   259 1E2F 30 06			bmi set_ntsc		; negative result means the machine runs at 60hz
+   260 1E31 A9 32			lda #50
+   261 1E33 A2 00			ldx #0			; roll over to #$FF, will always play
+   262 1E35 F0 04			beq region_done
+   263 1E37			set_ntsc
+   264 1E37 A9 3C			lda #60
+   265 1E39 A2 06			ldx #6 			; every 6th frame, a play call is skipped to adjust the speed between PAL to NTSC 
+   266 1E3B			region_done	
+   267 1E3B 8E 2B 1D			stx play_skip 
+   268 1E3E 8D 97 1C			sta framecount
+   269 1E41 60				rts
+   270
+   271 				;-----------------
+   272
+   273 				;* Print most infos on screen
+   274 					
+   275 1E42			print_player_infos
+   276 1E42 A9 D0 85 FE A9 23 + 	mwa #line_0 DISPLAY 	; get the right screen position
+   277
+   278 1E4A			print_minutes
+   279 1E4A AD AE 1C			lda v_minute
+   280 1E4D A0 08			ldy #8
+   281 1E4F 20 AA 1D			jsr printhex_direct
+   282 					
+   283 1E52			print_seconds
+   284 1E52 AE A0 1C			ldx v_second
+   285 1E55 8A				txa
+   286 1E56 A0 0A			ldy #10
+   287 1E58 29 01			and #1
+   288 1E5A F0 04			beq no_blink 
+   289 1E5C A9 00			lda #0
+   290 1E5E F0 02			beq blink
+   291 1E60			no_blink 
+   292 1E60 A9 1A			lda #":" 
+   293 1E62			blink
+   294 1E62 91 FE			sta (DISPLAY),y 
+   295 1E64 C8				iny 
+   296 1E65			done_blink
+   297 1E65 8A				txa
+   298 1E66 20 AA 1D			jsr printhex_direct
+   299
+   300 1E69			print_order	
+   301 1E69 A5 01			lda ZPLZS.SongPtr+1
+   302 1E6B A0 22			ldy #34
+   303 1E6D 20 AA 1D			jsr printhex_direct
+   304 					
+   305 1E70			print_row
+   306 1E70 A5 00			lda ZPLZS.SongPtr 
+   307 1E72 A0 24			ldy #36
+   308 1E74 20 AA 1D			jsr printhex_direct 
+   309 					
+   310 1E77			print_tune
+   311 1E77 A9 01			lda #1
+   312 = 1E78			tune_index equ *-1
+   313 1E79 20 D0 1D			jsr hex2dec_convert 
+   314 1E7C A0 7D			ldy #125
+   315 1E7E 20 AA 1D			jsr printhex_direct 
+   316 					
+   317 1E81			print_sfx
+   318 1E81 A9 01			lda #1
+   319 = 1E82			sfx_index equ *-1
+   320 1E83 20 D0 1D			jsr hex2dec_convert 
+   321 1E86 A0 A5			ldy #165
+   322 1E88 20 AA 1D			jsr printhex_direct 
+   323
+   324 1E8B			print_pointers
+   325 1E8B A0 37			ldy #55
+   326 1E8D AD 01 19			lda LZS.SongStartPtr+1
+   327 1E90 20 AA 1D			jsr printhex_direct
+   328 1E93 C8				iny
+   329 1E94 AD 00 19			lda LZS.SongStartPtr
+   330 1E97 20 AA 1D			jsr printhex_direct	
+   331 1E9A A0 47			ldy #71
+   332 1E9C AD 03 19			lda LZS.SongEndPtr+1
+   333 1E9F 20 AA 1D			jsr printhex_direct
+   334 1EA2 C8				iny
+   335 1EA3 AD 02 19			lda LZS.SongEndPtr
+   336 1EA6 20 AA 1D			jsr printhex_direct
+   337 					
+   338 1EA9			print_flags
+   339 1EA9 A0 59			ldy #89
+   340 1EAB AD 07 19			lda LZS.Initialized
+   341 1EAE 20 AA 1D			jsr printhex_direct
+   342 					
+   343 1EB1 A0 61			ldy #97
+   344 1EB3 AD 5B 1C			lda is_playing_flag
+   345 1EB6 20 AA 1D			jsr printhex_direct
+   346 					
+   347 1EB9 A0 69			ldy #105
+   348 1EBB AD 87 1B			lda is_looping
+   349 1EBE 20 AA 1D			jsr printhex_direct
+   350
+   351 1EC1 A0 71			ldy #113
+   352 1EC3 AD B9 1B			lda is_fadeing_out
+   353 1EC6 20 AA 1D			jsr printhex_direct
+   354 					
+   355 1EC9 60				rts
+   356 					
+   357 				;-----------------
+   358
+   359 				;* Joystick input handler, using PORTA 
+   360
+   361 1ECA			check_joystick
+   362 1ECA AE 00 D3			ldx PORTA
+   363 1ECD 8A				txa
+   364 1ECE 29 0F			and #%00001111
+   365 1ED0 C9 0F			cmp #%00001111			; neutral
+   366 1ED2 D0 1B			bne check_joystick_being_held
+   367 1ED4 A9 00			lda #0
+   368 1ED6 8D F0 1E			sta held_joystick_flag		; reset held joystick flag
+   369 1ED9 AD 10 D0			lda TRIG0			; 'Fire' button
+   370 1EDC F0 07			beq check_fire_being_held	; button pressed if 0
+   371 1EDE A9 00			lda #0
+   372 1EE0 8D E6 1E			sta held_fire_flag		; reset held button flag
+   373 1EE3 F0 0E			beq check_joystick_done
+   374 1EE5			check_fire_being_held
+   375 1EE5 A9 00			lda #0
+   376 = 1EE6			held_fire_flag equ *-1
+   377 1EE7 30 0A			bmi check_joystick_done		; fire is already being held, ignore the input
+   378 1EE9 CE E6 1E			dec held_fire_flag		; held button flag set again
+   379 1EEC 4C 5C 1F			jmp set_sfx_to_play		; end with a RTS!
+   380 1EEF			check_joystick_being_held
+   381 1EEF A9 00			lda #0
+   382 = 1EF0			held_joystick_flag equ *-1
+   383 1EF1 10 01			bpl check_joystick_up_down	; process the check, otherwise, a direction is already being held, ignore the input 	
+   384 1EF3			check_joystick_done
+   385 1EF3 60				rts
+   386
+   387 				;-----------------
+   388
+   389 				;* Up and Down bits
+   390
+   391 1EF4			check_joystick_up_down
+   392 1EF4 AC 82 1E			ldy sfx_index	
+   393 1EF7 8A				txa
+   394 1EF8 29 03			and #%00000011
+   395 1EFA C9 03			cmp #%00000011
+   396 1EFC F0 2A			beq check_joystick_left_right
+   397 1EFE CE F0 1E			dec held_joystick_flag
+   398
+   399 				;-----------------
+   400
+   401 				;* Down
+   402
+   403 1F01			do_joystick_down
+   404 1F01 C9 01			cmp #%00000001 
+   405 1F03 D0 0B			bne do_joystick_up
+   406 1F05 88				dey
+   407 1F06 F0 04			beq sfx_index_wrap
+   408 1F08 30 02			bmi sfx_index_wrap
+   409 1F0A D0 11			bne update_sfx_index
+   410 1F0C			sfx_index_wrap
+   411 1F0C A0 0A			ldy #SFX_NUM
+   412 1F0E 10 0D			bpl update_sfx_index
+   413
+   414 				;-----------------
+   415
+   416 				;* Up
+   417
+   418 1F10			do_joystick_up	
+   419 1F10 C9 02			cmp #%00000010 
+   420 1F12 D0 09			bne update_sfx_index
+   421 1F14 C8				iny
+   422 1F15 C0 0A			cpy #SFX_NUM
+   423 1F17 90 04			bcc update_sfx_index
+   424 1F19 F0 02			beq update_sfx_index
+   425 1F1B A0 01			ldy #1
+   426 1F1D			update_sfx_index
+   427 1F1D 8C 82 1E			sty sfx_index 
+   428 1F20 20 BC 1F			jsr check_sfx_index 
+   429 1F23 A9 01			lda #1				; play sfx: menu movement 
+   430 1F25 4C 5E 1F			jmp set_sfx_to_play_immediate	; end with a RTS! 
+   431
+   432 				;-----------------
+   433
+   434 				;* Left and Right bits
+   435
+   436 1F28			check_joystick_left_right
+   437 1F28 AC 78 1E			ldy tune_index
+   438 1F2B 8A				txa
+   439 1F2C 29 0C			and #%00001100
+   440 1F2E C9 0C			cmp #%00001100
+   441 1F30 F0 C1			beq check_joystick_done
+   442 1F32 CE F0 1E			dec held_joystick_flag 
+   443
+   444 				;-----------------
+   445
+   446 				;* Left
+   447
+   448 1F35			do_joystick_left	
+   449 1F35 C9 08			cmp #%00001000 
+   450 1F37 D0 0B			bne do_joystick_right
+   451 1F39 88				dey
+   452 1F3A F0 04			beq tune_index_wrap
+   453 1F3C 30 02			bmi tune_index_wrap
+   454 1F3E D0 11			bne update_tune_index
+   455 1F40			tune_index_wrap
+   456 1F40 A0 03			ldy #TUNE_NUM
+   457 1F42 10 0D			bpl update_tune_index
+   458
+   459 				;-----------------
+   460
+   461 				;* Right 
+   462
+   463 1F44			do_joystick_right	
+   464 1F44 C9 04			cmp #%00000100 
+   465 1F46 D0 09			bne update_tune_index 
+   466 1F48 C8				iny
+   467 1F49 C0 03			cpy #TUNE_NUM
+   468 1F4B 90 04			bcc update_tune_index
+   469 1F4D F0 02			beq update_tune_index
+   470 1F4F A0 01			ldy #1
+   471 1F51			update_tune_index
+   472 1F51 8C 78 1E			sty tune_index
+   473 1F54 20 A6 1F			jsr check_tune_index 
+   474 1F57 A9 01			lda #1				; play sfx: menu movement 
+   475 1F59 4C 5E 1F			jmp set_sfx_to_play_immediate	; end with a RTS!  
+   476
+   477 				;-----------------
+   478
+   479 				;* Initialise the SFX to play in memory once the joystick button is pressed, using the SFX index number
+   480
+   481 1F5C			set_sfx_to_play
+   482 1F5C A9 00			lda #0
+   483 = 1F5D			SfxIdx equ *-1
+   484 1F5E			set_sfx_to_play_immediate
+   485 1F5E 0A				asl @
+   486 1F5F AA				tax
+   487 1F60 BD 58 22			lda sfx_data,x
+   488 1F63 8D 93 1F			sta sfx_src
+   489 1F66 BD 59 22			lda sfx_data+1,x
+   490 1F69 8D 94 1F			sta sfx_src+1
+   491 1F6C EE 7B 1F			inc is_playing_sfx 
+   492 1F6F A9 03			lda #3 
+   493 1F71 8D 8B 1F			sta sfx_channel
+   494 1F74 A9 00			lda #0
+   495 1F76 8D 84 1F			sta sfx_offset
+   496 1F79 60				rts
+   497
+   498 				;-----------------
+   499
+   500 				;* Play the SFX currently set in memory, one frame every VBI
+   501
+   502 1F7A			play_sfx
+   503 1F7A A9 FF			lda #$FF		; #$00 -> Play SFX until it's ended, #$FF -> SFX has finished playing and is stopped
+   504 = 1F7B			is_playing_sfx equ *-1
+   505 1F7C 30 27			bmi play_sfx_done
+   506 1F7E A9 02			lda #2			; 2 frames
+   507 1F80 8D 7B 1F			sta is_playing_sfx
+   508 1F83 A9 00			lda #0
+   509 = 1F84			sfx_offset equ *-1
+   510 1F85 0A				asl @
+   511 1F86 AA				tax
+   512 1F87 EE 84 1F			inc sfx_offset
+   513 1F8A A9 00			lda #0
+   514 = 1F8B			sfx_channel equ *-1
+   515 1F8C 0A				asl @
+   516 1F8D A8				tay
+   517 1F8E 10 02			bpl begin_play_sfx
+   518 1F90			play_sfx_loop
+   519 1F90 E8				inx
+   520 1F91 C8				iny
+   521 1F92			begin_play_sfx
+   522 1F92 BD FF FF		        lda $ffff,x
+   523 = 1F93			sfx_src equ *-2
+   524 1F95 99 50 1C			sta SDWPOK0,y
+   525 1F98 CE 7B 1F			dec is_playing_sfx
+   526 1F9B D0 F3			bne play_sfx_loop
+   527 1F9D B9 50 1C			lda SDWPOK0,y
+   528 1FA0 D0 03			bne play_sfx_done
+   529 1FA2 CE 7B 1F			dec is_playing_sfx
+   530 1FA5			play_sfx_done
+   531 1FA5 60				rts
+   532
+   533 				;-----------------
+   534
+   535 				;* Compare the tune index number to the one being displayed
+   536 				;* If they don't match, a new tune will play!
+   537
+   538 1FA6			check_tune_index 
+   539 1FA6 AE 78 1E			ldx tune_index
+   540 1FA9 CA				dex				; offset by 1, since the first entry is 0
+   541 1FAA EC 81 1B			cpx SongIdx
+   542 1FAD D0 01			bne check_tune_index_a 
+   543 1FAF			check_tune_index_done	
+   544 1FAF 60				rts				; if they are the same, there is nothing else to do here 
+   545 1FB0			check_tune_index_a	
+   546 1FB0 8E 81 1B			stx SongIdx
+   547 1FB3 20 CE 1F			jsr update_tune_name 
+   548 1FB6 20 77 1B			jsr SetNewSongPtrsFull 
+   549 1FB9 4C B9 1C			jmp reset_timer 		; end with a RTS! 
+   550
+   551 				;-----------------
+   552
+   553 				;* Compare the sfx index number to the one being displayed
+   554 				;* If they don't match, a new sfx will play!
+   555
+   556 1FBC			check_sfx_index 
+   557 1FBC AE 82 1E			ldx sfx_index
+   558 1FBF CA				dex				; offset by 1, since the first entry is 0
+   559 1FC0 EC 5D 1F			cpx SfxIdx 
+   560 1FC3 D0 01			bne check_sfx_index_a 
+   561 1FC5			check_sfx_index_done	
+   562 1FC5 60				rts				; if they are the same, there is nothing else to do here 
+   563 1FC6			check_sfx_index_a
+   564 1FC6 8E 5D 1F			stx SfxIdx
+   565 1FC9 4C E5 1F			jmp update_sfx_name 		; end with a RTS! 
+   566
+   567 				;-----------------
+   568
+   569 				;* Update the song name displayed on screen based on the index number
+   570
+   571 1FCC			set_tune_name
+   572 1FCC A2 00			ldx #0				; default index number, else, use the value from X directly
+   573 1FCE			update_tune_name
+   574 1FCE A9 54 85 FE A9 24 + 	mwa #line_3+12 DISPLAY		; set the screen coordinates for the song name displayed on screen
+   575 1FD6 A9 B8 8D 9D 1D A9 + 	mwa #song_name infosrc		; set the memory address for the text data 
+   576 1FE0 4C F7 1F			jmp update_both_name		; end with a RTS over there! 
+   577
+   578 				;-----------------
+   579
+   580 				;* Update the sfx name displayed on screen based on the index number
+   581
+   582 1FE3			set_sfx_name
+   583 1FE3 A2 00			ldx #0				; default index number, else, use the value from X directly
+   584 1FE5			update_sfx_name
+   585 1FE5 A9 7C 85 FE A9 24 + 	mwa #line_4+12 DISPLAY		; set the screen coordinates for the sfx name displayed on screen
+   586 1FED A9 18 8D 9D 1D A9 + 	mwa #sfx_name infosrc		; set the memory address for the text data 
+   587
+   588 				;-----------------
+   589
+   590 				;* Both the song name and sfx name will use the same code for drawing text on screen after addresses initialisation 
+   591
+   592 1FF7			update_both_name 
+   593 1FF7 8A				txa
+   594 1FF8 0A 0A 0A 0A 0A		:5 asl @
+   595 1FFD 90 03 EE 9E 1D		scc:inc infosrc+1
+   596 2002 AA				tax 
+   597 2003 A0 1C			ldy #28				; 32 characters per index 
+   598 2005 4C 97 1D			jmp printinfo			; end with a RTS! 
+   599
+   600 				;-----------------
+   601
+   602 				;* Display the number of tunes and sfx indexed in memory, using the values defined at assembly time 
+   603
+   604 2008			set_index_count
+   605 2008 A9 D0 85 FE A9 23 + 	mwa #line_0 DISPLAY 	; get the right screen position
+   606 2010 A9 03			lda #TUNE_NUM
+   607 2012 20 D0 1D			jsr hex2dec_convert 
+   608 2015 A0 80			ldy #128 
+   609 2017 20 AA 1D			jsr printhex_direct
+   610 201A A9 0A			lda #SFX_NUM
+   611 201C 20 D0 1D			jsr hex2dec_convert 
+   612 201F A0 A8			ldy #168
+   613 2021 20 AA 1D			jsr printhex_direct
+   614 2024 60				rts
+   615
+   616 				;-----------------
+   617
+   618 				;* check all keys that have a purpose here... 
+   619 				;* this is the world's most cursed jumptable ever created!
+   620 				;* regardless, this finally gets rid of all the spaghetti code I made previously!
+   621
+   622 2025			check_keys 
+   623 2025 98				tya				; transfer to the accumulator to make a quick and dirty jump table
+   624 2026 0A				asl @				; ASL only once, allowing a 2 bytes index, good enough for branching again immediately and unconditionally, 128 bytes needed sadly...
+   625 2027 8D 2B 20			sta k_index+1			; branch will now match the value of Y
+   626 202A D0 FE		k_index	bne * 
+   627 202C 60 EA			rts:nop				; Y = 0 -> L key
+   628 202E 60 EA			rts:nop
+   629 2030 60 EA			rts:nop
+   630 2032 60 EA			rts:nop
+   631 2034 60 EA			rts:nop
+   632 2036 60 EA			rts:nop
+   633 2038 60 EA			rts:nop				; Y = 6 -> Atari 'Left' / '+' key
+   634 203A 60 EA			rts:nop				; Y = 7 -> Atari 'Right' / '*' key 
+   635 203C 90 71			bcc do_stop_toggle 		; Y = 8 -> 'O' key (not zero!!) 
+   636 203E 60 EA			rts:nop
+   637 2040 90 70			bcc do_play_pause_toggle	; Y = 10 -> 'P' key
+   638 2042 60 EA			rts:nop
+   639 2044 60 EA			rts:nop				; Y = 12 -> 'Enter' key
+   640 2046 60 EA			rts:nop
+   641 2048 60 EA			rts:nop
+   642 204A 60 EA			rts:nop
+   643 204C 60 EA			rts:nop
+   644 204E 60 EA			rts:nop
+   645 2050 60 EA			rts:nop				; Y = 18 -> 'C' key
+   646 2052 60 EA			rts:nop
+   647 2054 60 EA			rts:nop
+   648 2056 60 EA			rts:nop
+   649 2058 60 EA			rts:nop				; Y = 22 -> 'X' key
+   650 205A 60 EA			rts:nop				; Y = 23 -> 'Z' key
+   651 205C 60 EA			rts:nop				; Y = 24 -> '4' key
+   652 205E 60 EA			rts:nop
+   653 2060 60 EA			rts:nop				; Y = 26 -> '3' key
+   654 2062 60 EA			rts:nop				; Y = 27 -> '6' key
+   655 2064 90 46			bcc do_exit			; Y = 28 -> 'Escape' key
+   656 2066 60 EA			rts:nop				; Y = 29 -> '5' key
+   657 2068 60 EA			rts:nop				; Y = 30 -> '2' key
+   658 206A 60 EA			rts:nop				; Y = 31 -> '1' key
+   659 206C 60 EA			rts:nop
+   660 206E 60 EA			rts:nop			 	; Y = 33 -> 'Spacebar' key
+   661 2070 60 EA			rts:nop
+   662 2072 60 EA			rts:nop
+   663 2074 60 EA			rts:nop
+   664 2076 60 EA			rts:nop
+   665 2078 60 EA			rts:nop
+   666 207A 60 EA			rts:nop
+   667 207C 60 EA			rts:nop				; Y = 40 -> 'R' key
+   668 207E 60 EA			rts:nop
+   669 2080 60 EA			rts:nop
+   670 2082 60 EA			rts:nop
+   671 2084 60 EA			rts:nop
+   672 2086 60 EA			rts:nop
+   673 2088 60 EA			rts:nop				; Y = 46 -> 'W' key
+   674 208A 60 EA			rts:nop
+   675 208C 60 EA			rts:nop
+   676 208E 60 EA			rts:nop
+   677 2090 60 EA			rts:nop
+   678 2092 60 EA			rts:nop				; Y = 51 -> '7' key
+   679 2094 60 EA			rts:nop
+   680 2096 60 EA			rts:nop				; Y = 53 -> '8' key
+   681 2098 60 EA			rts:nop
+   682 209A 60 EA			rts:nop
+   683 209C 90 17			bcc do_trigger_fade_immediate	; Y = 56 -> 'F' key
+   684 209E 60 EA			rts:nop				; Y = 57 -> 'H' key
+   685 20A0 60 EA			rts:nop				; Y = 58 -> 'D' key
+   686 20A2 60 EA			rts:nop
+   687 20A4 60 EA			rts:nop
+   688 20A6 60 EA			rts:nop
+   689 20A8 60 EA			rts:nop				; Y = 62 -> 'S' key
+   690 20AA 60 EA			rts:nop				; Y = 63 -> 'A' key
+   691
+   692 				;-----------------
+   693
+   694 				;* Jumptable from the branches above, long range in case things don't quite reach 
+   695
+   696 20AC			do_exit
+   697 20AC 4C 06 1E			jmp stop_and_exit		; stop and exit to DOS 
+   698 					
+   699 20AF			do_stop_toggle
+   700 20AF 4C F8 1B			jmp stop_toggle			; toggle stop flag
+   701 					
+   702 20B2			do_play_pause_toggle	
+   703 20B2 4C 5A 1C			jmp play_pause_toggle		; toggle play/pause flag
+   704
+   705 20B5			do_trigger_fade_immediate
+   706 20B5 4C 6C 1C			jmp trigger_fade_immediate	; immediately set the 'fadeout' flag then stop the player once finished
+   707 					
+   708 				;-----------------
+   709
+   710 				;//---------------------------------------------------------------------------------------------
+   711
+   712 				;* Song and SFX text data, 32 characters per entry, display 28 characters or less for best results
+   713
+   714 20B8			song_name        
+   715 20B8 28 61 70 70 79 00 + 	dta d"Happy Bunnies, Boing Boing!     " 
+   716 20D8 26 61 6E 74 61 69 + 	dta d"Fantaisie Nocturne              " 
+   717 20F8 34 68 65 00 26 6F + 	dta d"The Forest Is Peaceful Again    " 
+   718
+   719 2118			sfx_name
+   720 2118 2D 65 6E 75 00 0D + 	dta d"Menu - Press                    " 
+   721 2138 2D 65 6E 75 00 0D + 	dta d"Menu - Movement                 " 
+   722 2158 2D 65 6E 75 00 0D + 	dta d"Menu - Keyclick                 " 
+   723 2178 2D 65 6E 75 00 0D + 	dta d"Menu - Code Rejected            " 
+   724 2198 2D 65 6E 75 00 0D + 	dta d"Menu - Code Accepted            " 
+   725 21B8 27 61 6D 65 00 0D + 	dta d"Game - Select Unselect          " 
+   726 21D8 27 61 6D 65 00 0D + 	dta d"Game - Move Fox                 " 
+   727 21F8 27 61 6D 65 00 0D + 	dta d"Game - Move Bunny               " 
+   728 2218 27 61 6D 65 00 0D + 	dta d"Game - In Hole                  " 
+   729 2238 27 61 6D 65 00 0D + 	dta d"Game - Cannot Do                " 
+   730
+   731 				;-----------------
+   732
+   733 				;* Sound effects index  
+   734
+   735 2258			sfx_data
+   736 2258 6C 22			dta a(sfx_00)
+   737 225A 96 22			dta a(sfx_01)
+   738 225C B0 22			dta a(sfx_02)
+   739 225E C4 22			dta a(sfx_03)
+   740 2260 DE 22			dta a(sfx_04)
+   741 2262 1A 23			dta a(sfx_05)
+   742 2264 2C 23			dta a(sfx_06)
+   743 2266 4E 23			dta a(sfx_07)
+   744 2268 76 23			dta a(sfx_08)
+   745 226A BC 23			dta a(sfx_09)  
+   746
+   747 				;* Sound effects data 
+   748
+   749 226C 5F A8 5F A6 5F A5 + sfx_00	ins '/Bunny Hop SFX/menu-press.sfx'
+   750 2296 5F A8 5F A6 2F A8 + sfx_01	ins '/Bunny Hop SFX/menu-movement.sfx'
+   751 22B0 1D A7 3B A5 3B A3 + sfx_02	ins '/Bunny Hop SFX/menu-keyclick.sfx'
+   752 22C4 1F C9 1F C9 EC A8 + sfx_03	ins '/Bunny Hop SFX/menu-code_rejected.sfx'
+   753 22DE 28 A9 28 A9 28 A8 + sfx_04	ins '/Bunny Hop SFX/menu-code_accepted.sfx'
+   754 231A 1D A7 50 A8 50 A5 + sfx_05	ins '/Bunny Hop SFX/game-select_unselect.sfx'
+   755 232C 07 01 05 02 04 03 + sfx_06	ins '/Bunny Hop SFX/game-move_fox.sfx'
+   756 234E 71 A7 38 A7 6B A7 + sfx_07	ins '/Bunny Hop SFX/game-move_bunny.sfx'
+   757 2376 3C A6 78 A8 78 A7 + sfx_08	ins '/Bunny Hop SFX/game-in_hole.sfx'
+   758 23BC 4C C8 4C C8 4C C8 + sfx_09	ins '/Bunny Hop SFX/game-cannot_do.sfx' 
+   759
+   760 				;-----------------
+   761
+   762 				;* Screen memory 
+   763 					
+   764 23D0 00 00 34 69 6D 65 + line_0	dta d"  Time: 00:00      LZSS Address: $0000  "
+   765 23F8 00 00 00 00 33 74 + line_1	dta d"    StartPtr: $0000   EndPtr: $0000     "
+   766 2420 00 00 00 00 00 29 + line_2	dta d"     I: $00  P: $00  L: $00  F: $00     "
+   767 2448 34 75 6E 65 00 10 + line_3	dta d"Tune 01/01: (insert title here)         "
+   768 2470 00 33 26 38 00 10 + line_4	dta d" SFX 01/01: (28 chars or less maybe)    "
+   769 2498 00 00 00 00 00 34 + line_5	dta d"     Tune: Left/Right SFX: Up/Down      "
+   770 24C0 00 00 30 72 65 73 + line_6	dta d"  Press 'Fire' to play the selected SFX "
+   771 24E8 00 24 35 2D 22 00 + line_7	dta d" DUMB Soundtest-LZSS by VinsCool   "
+   772 250B F6 90 8E 91 00	line_7a	dta d"v0.1"*,$00
+   773
+   774 				;-----------------
+   775
+   776 				;* VBI address backup 
+   777
+   778 2510			oldvbi	
+   779 2510 00 00			dta a(0) 
+   780 					
+   781 				;-----------------
+   782
+   783 				;* Display list 
+   784
+   785 2512			dlist 
+   786 2512 70 70 70 70 70 70		:6 dta $70		; start with 6 empty lines
+   787 2518 42				dta $42			; ANTIC mode 2 
+   788 2519 D0 23			dta a(line_0)		; line_0 
+   789 251B 70				:1 dta $70		; empty lines
+   790 251C 02				dta $02			; line_1
+   791 251D 70				:1 dta $70		; empty lines
+   792 251E 02				dta $02			; line_2
+   793 251F 70 70 70			:3 dta $70		; empty lines
+   794 2522 02 02			:2 dta $02		; line_3 and line_4
+   795 2524 70 70			:2 dta $70		; empty lines
+   796 2526 02				dta $02			; line_5
+   797 2527 70				:1 dta $70		; empty lines
+   798 2528 02				dta $02			; line_6 
+   799 2529 70 70 70 70			:4 dta $70		; empty lines
+   800 252D 02				dta $02			; line_7 
+   801 252E 41 12 25			dta $41,a(dlist)	; Jump and wait for vblank, return to dlist 
+   802 02E0-02E1> C8 1C			run start 		; run address was put here for simplicity, so it come after everything else in memory 
+   803
+   804 				;----------------- 
+   805
+   806 				;//---------------------------------------------------------------------------------------------
+   807
+   808 				;* And that's all folks :D
+   809
+   810 				;----------------- 
+   811
+   315
+   316 				;-----------------
+   317
+   318 				;//---------------------------------------------------------------------------------------------
+   319
+   320 				;* Songs index and data will be inserted here, after everything else, that way they are easy to modify externally
+   321
+   322 				;	org SONGINDEX	
+   323 2531				icl "SongIndex.asm" 
+Source: SongIndex.asm
+     1 				;* Songs index always begin with the "intro" section, followed by the "loop" section, when applicable 
+     2 				;* Index list must end with the dummy tune address to mark the end of each list properly 
+     3 				;* Make sure to define the total number of tunes that could be indexed in code using it to avoid garbage data being loaded 
+     4
+     5 2531			SongsIndexStart	
+     6 2531-4013> 41 25			dta a(S_Id_0) 
+     7 2533 CA 25			dta a(S_Id_1) 
+     8 2535 F1 27			dta a(S_Id_2) 
+     9 2537 D3 28			dta a(S_DUMMY) 
+    10 2539			SongsIndexEnd	
+    11
+    12 				;-----------------
+    13 						
+    14 				;//---------------------------------------------------------------------------------------------
+    15
+    16 2539			LoopsIndexStart
+    17 2539 D3 28			dta a(L_Id_0) 
+    18 253B 12 30			dta a(L_Id_1) 
+    19 253D 4C 3A			dta a(L_Id_2) 
+    20 253F 14 40			dta a(L_DUMMY) 
+    21 2541			LoopsIndexEnd 
+    22
+    23 				;-----------------			
+    24
+    25 				;//---------------------------------------------------------------------------------------------
+    26
+    27 				;* Intro subtunes index, this is the part of a tune that will play before a loop point 
+    28 				;* If the intro and loop are identical, or close enough to sound seamless, the intro could be replaced by a dummy to save space
+    29 				;* IMPORTANT: due to technical reasons, every indexes MUST end with a dummy subtune! Otherwise the entire thing will break apart!
+    30
+    31 				;-----------------
+    32
+    33 				;//---------------------------------------------------------------------------------------------
+    34
+    35 2541			S_Id_0
+    36 2541 87 00 00 00 06 03 + 	ins	'/Bunny Hop LZSS/TUNE_1_INTRO.lzss'
+    37 25CA			S_Id_1
+    38 25CA 07 00 00 00 84 02 + 	ins	'/Bunny Hop LZSS/TUNE_2_INTRO.lzss'
+    39 27F1			S_Id_2
+    40 27F1 87 00 00 00 05 00 + 	ins	'/Bunny Hop LZSS/TUNE_3_INTRO.lzss' 
+    41 28D3			S_DUMMY
+    42
+    43 				;-----------------
+    44 						
+    45 				;//---------------------------------------------------------------------------------------------
+    46
+    47 				;* Looped subtunes index, if a dummy is inserted, the tune has a definite end and won't loop and/or fadeout!
+    48
+    49 28D3			L_Id_0
+    50 28D3 07 00 00 00 06 03 + 	ins	'/Bunny Hop LZSS/TUNE_1_LOOP.lzss' 
+    51 3012			L_Id_1
+    52 3012 07 00 00 00 84 02 + 	ins	'/Bunny Hop LZSS/TUNE_2_LOOP.lzss' 
+    53 3A4C			L_Id_2
+    54 3A4C 01 00 00 28 05 00 + 	ins	'/Bunny Hop LZSS/TUNE_3_LOOP.lzss' 
+    55 4014			L_DUMMY 
+    56
+    57 				;-----------------
+    58 						
+    59 				;//--------------------------------------------------------------------------------------------- 
+    60
+   324 					
+   325 				;-----------------
+   326
+   327 				;//---------------------------------------------------------------------------------------------
+   328
