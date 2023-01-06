@@ -21,8 +21,8 @@ DRIVER		equ $1000		; Unrolled LZSS driver by rensoupp, for LZSS data buffer and 
 	
 ;* Below is a bunch of example addreses, they are not intended to be a requirement! 
 	
-SOUNDTEST	equ $2000		; Example program, optional 
-SONGINDEX	equ $3000		; Songs index and data, alligned memory for easier insertion from RMT, optional 
+;SOUNDTEST	equ $2000		; Example program, optional 
+;SONGINDEX	equ $3000		; Songs index and data, alligned memory for easier insertion from RMT, optional 
 
 ;-----------------
 
@@ -57,41 +57,68 @@ SONGINDEX	equ $3000		; Songs index and data, alligned memory for easier insertio
 SetNewSongPtrsFull 			; if the routine is called from this label, index and loop are restarted
 	ldx #0
 	stx is_fadeing_out		; reset fadeout flag, the new index is loaded from start
-	inx
 	stx is_looping 			; reset the loop counter, the new index is loaded from start 
-SetNewSongPtrs 				; if the routine is called from this label, it will use the current parameters instead 
+	stx loop_count
 	lda #0				; current tune index, must be set before the routine is executed
 	SongIdx equ *-1 
 	asl @				; multiply by 2, for the hi and lo bytes of each address 
+	asl @				; multiply again, offset each songs by 4 bytes
 	tax 
-	ldy #$FC			; offset ahead for overwriting, saves 1 CPY #4 instruction for each loop iteration 
-	lda #1				; is the 'loop' flag set?
-	is_looping equ *-1
-	bmi DontSet			; loop point initialised, there is nothing else to do 
-	beq SetNewLoopPtrs		; load the loop subtune pointers 
+	lda SongIndex,x
+	sta SongPtr+0
+	inx 
+	lda SongIndex,x
+	sta SongPtr+1
+	inx 
+	lda SongIndex,x
+	sta SectionPtr+0
+	inx 
+	lda SongIndex,x
+	sta SectionPtr+1
+	
+SetNewSongPtrs 				; if the routine is called from this label, it will use the current parameters instead 
+	ldy #0 
+	is_looping equ *-1 
+	lda $FFFF,y
+	SectionPtr equ *-2 
+	bpl SetNewSongPtrs_c
+	
 SetNewSongPtrs_a
-	lda SongsIndexStart,x
-	sta LZS.SongEndPtr+1-$FF,y 	; 1 page behind to adjust with Y 
+	cmp #$FF
+	bne SetNewSongPtrs_b
+	jmp stop_toggle
+
+SetNewSongPtrs_b
+	and #$7F
+	sta is_looping
+;	bpl SetNewSongPtrs
+	inc loop_count
+	lda #0
+	loop_count equ *-1
+	cmp #2
+	bne SetNewSongPtrs
+	jsr trigger_fade_immediate
+	jmp SetNewSongPtrs
+
+SetNewSongPtrs_c	
+	asl @
+	tax
+	ldy #0
+	
+SetNewSongPtrs_d
+	lda $FFFF,x
+	SongPtr equ *-2
+	sta LZS.SongStartPtr,y
 	inx
 	iny
-	bmi SetNewSongPtrs_a 		; Y < 0, loop, for 4 values to write 	
-	dec is_looping			; 1 -> 0 
-	jsr check_loop_for_dummies	; carry flag will be returned
-	bcc SetNewSongPtrs		; carry clear -> dummy, skip the part altogether and play the looped section
-DontSet	
+	cpy #4
+	bcc SetNewSongPtrs_d
+	inc is_looping 
+
+SetNewSongPtrsDone
 	lda #0
 	sta LZS.Initialized		; reset the state of the LZSS driver to not initialised so it can play the next tune or loop 
 	rts 	
-SetNewLoopPtrs 
-	lda LoopsIndexStart,x
-	sta LZS.SongEndPtr+1-$FF,y 	; 1 page behind to adjust with Y 
-	inx
-	iny
-	bmi SetNewLoopPtrs 		; Y < 0, loop, for 4 values to write 
-	dec is_looping			; 0 -> FF 
-	jsr check_loop_for_dummies	; carry flag will be returned
-	bcs DontSet			; carry set -> not a dummy, continue playing
-	bcc stop_toggle			; else, the tune is a dummy, and should be stopped immediately 
 
 ;-----------------
 
@@ -105,6 +132,10 @@ fade_volume_loop
 begin_fadeout			; below 0 means it is set, and must be initialised first 
 	lda #1			; unit of volume to subtract
 	sta is_fadeing_out	; flag and initial fade volume set
+
+	lda v_second		; current second
+	sta last_second_seen	; initialise the timer for fadeout
+
 continue_fadeout	
 	ldy #7			; index from the 4th AUDC 
 fade_volume_loop_a
@@ -127,13 +158,27 @@ volume_loop_again
 	sta SDWPOK0,y		; write the new AUDC value in memory for later
 	:2 dey			; decrement twice to only load the AUDC
 	bpl fade_volume_loop_a	; continue this loop until Y overflows to $FF 
+	
 ;	lda RTCLOK+2 		; I wanted to use RTCLOK+2, but it doesn't work for some reason...
-	lda v_frame		; frame counter from the time display routine
-	and #$0F		; every 15 frames
-	beq fade_increment	; if not 0, skip
+;	lda v_frame		; frame counter from the time display routine
+;	and #$0F		; every 15 frames
+;	beq fade_increment	; if not 0, skip
+
+	lda v_second		; current second count
+	cmp #0			; compare to the last second loaded 
+	last_second_seen equ *-1
+	bne fade_increment
+	
+;;	beq fade_volume_done	; equal means 1 second has not yet passed, done
+;	sta last_second_seen	; otherwise, this becomes the new value to compare
+
 fade_volume_done
 	rts
+	
 fade_increment
+
+	sta last_second_seen
+
 	inc is_fadeing_out	; increment the fadeout value to subtract by 1 
 	lda is_fadeing_out	; load that value for the comparison 
 	cmp #11			; 10 seconds must have passed to reach 10 units

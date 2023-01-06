@@ -11,15 +11,26 @@
 
 ;//---------------------------------------------------------------------------------------------
 
+; song speed xVBI
+
+SongSpeed	equ 1		; 1 => 50/60hz, 2 => 100/120hz, etc
+
+; playback speed will be adjusted accordingly in the other region
+
+REGIONPLAYBACK	equ 0		; 0 => PAL, 1 => NTSC
+
 DISPLAY 	equ $FE		; Display List indirect memory address
 
 ;* Subtune index number is offset by 1, meaning the subtune 0 would be subtune 1 visually
 
-TUNE_NUM	equ 3 		; Bunny Hop music by PG 
+TUNE_NUM	equ (SongIndexEnd-SongIndex)/4
 
 ;* Sound effects index number will be displayed the same way for simplicity
 
 SFX_NUM		equ 10		; Bunny Hop SFX by PG 
+
+VLINE		equ 8		; 16 is the default according to Raster's example player 
+RASTERBAR	equ $69		; $69 is a nice purpleish hue 
 
 ;-----------------
 
@@ -39,33 +50,107 @@ start
 	jsr set_index_count 	; print number of tunes and sfx indexed in memory
 	jsr set_tune_name	; print the tune name 
 	jsr set_sfx_name	; print the sfx name
-	jsr stop_pause_reset	; clear the POKEY registers first 
-	jsr SetNewSongPtrsFull	; initialise the LZSS driver with the song pointer using default values always 
+;	jsr stop_pause_reset	; clear the POKEY registers first 
+;	jsr SetNewSongPtrsFull	; initialise the LZSS driver with the song pointer using default values always 
 	jsr detect_region
-	jsr reset_timer	
-	dec play_skip 		; initialise the PAL/NTSC condition, player is skipped every 6th frame in NTSC 
+	jsr stop_toggle
+;	jsr reset_timer	
+;	dec play_skip 		; initialise the PAL/NTSC condition, player is skipped every 6th frame in NTSC 
 	ldx #$22		; DMA enable, normal playfield
 	stx SDMCTL		; write to Shadow Direct Memory Access Control address
 	ldx #50	
+
 wait_init   
 	jsr wait_vblank		; wait for vblank => 50 frames
 	dex			; decrement index x
 	bne wait_init		; repeat until x = 0, total wait time is ~2 seconds
+	
 init_done
 	sei			; Set Interrupt Disable Status
 	mwa VVBLKI oldvbi       ; vbi address backup
 	mwa #vbi VVBLKI		; write our own vbi address to it 
 	mva #$40 NMIEN		; enable vbi interrupts
+wait_sync
+	lda VCOUNT		; current scanline 
+	cmp #VLINE		; will stabilise the timing if equal
+	bcc wait_sync		; nope, repeat 
+	jsr play_pause_toggle	; now is the good time to toggle play
 	
 ;-----------------
 
 ;//---------------------------------------------------------------------------------------------
 
-;* Mainloop, anything that could run while the screen is drawing 
+;* main loop, code runs from here ad infinitum after initialisation
 
 loop
-	jmp loop		; infinitely
-	
+	ldy #RASTERBAR			; custom rasterbar colour
+rasterbar_colour equ *-1
+acpapx1
+	lda spap
+	ldx #0
+cku	equ *-1
+	bne keepup
+	lda VCOUNT			; vertical line counter synchro
+	tax
+	sub #VLINE
+lastpap	equ *-1
+	scs:adc #$ff
+ppap	equ *-1
+	sta dpap
+	stx lastpap
+	lda #0
+spap	equ *-1
+	sub #0
+dpap	equ *-1
+	sta spap
+	bcs acpapx1
+keepup
+	adc #$ff
+acpapx2	equ *-1
+	sta spap
+	ldx #0
+	scs:inx
+	stx cku
+;	sty WSYNC			; horizontal sync for timing purpose
+do_play
+	lda is_playing_flag 		; 0 -> is playing, else it is either stopped or paused 
+	bne do_sfx			; in this case, nothing will happen until it is changed back to 0 
+	sty COLBK			; background colour 
+	jsr setpokeyfull		; update the POKEY registers first, for both the SFX and LZSS music driver 
+	jsr LZSSPlayFrame		; Play 1 LZSS frame
+	jsr LZSSUpdatePokeyRegisters	; buffer to let setpokeyfast match the RMT timing 
+	jsr fade_volume_loop		; run the fadeing out code from here until it's finished
+	lda is_playing_flag		; was the player paused/stopped after fadeing out?
+	bne do_sfx			; if not equal, it was most likely stopped, and so there is nothing else to do here 
+
+/*
+	beq do_play_next
+	ldy tune_index
+	iny
+	cpy #TUNE_NUM
+	bcc update_tune
+	beq update_tune
+	ldy #1
+	sty tune_index
+	bpl loop
+update_tune
+	sty tune_index
+	lda #0
+	sta is_playing_flag
+	beq loop
+*/
+
+do_play_next
+	jsr LZSSCheckEndOfSong		; is the current LZSS index done playing?
+	bne do_sfx			; if not, go back to the loop and wait until the next call
+	jsr SetNewSongPtrs		; update the subtune index for the next one in adjacent memory 
+do_sfx
+	jsr play_sfx			; process the SFX data, if an index is queued and ready to play for this frame 
+;	sty WSYNC
+	ldy #$00			; black colour value
+	sty COLBK			; background colour
+	beq loop			; unconditional
+
 ;----------------- 
 
 ;//---------------------------------------------------------------------------------------------
@@ -73,34 +158,7 @@ loop
 ;* VBI loop, run through all the code that is needed, then return with a RTI 
 
 vbi 
-	ldx #0				; PAL/NTSC adjustment flag 
-play_skip equ *-1
-	bmi do_play_always		; #$FF -> PAL region was detected 
-	beq dont_play_this_frame	; #0 -> NTSC region was detected, skip the player call for this frame 
-	dex 				; decrement the counter for the next frame
-	stx play_skip 			; and overwrite the value 
-	bpl do_play_always		; unconditional, this frame will be played
-dont_play_this_frame
-	lda #5				; reset the counter 
-	sta play_skip
-	bpl check_key_pressed 		; and skip this frame 
-do_play_always 
-	jsr setpokeyfull		; update the POKEY registers first, for both the SFX and LZSS music driver 
-do_play
-	lda is_playing_flag 		; 0 -> is playing, else it is either stopped or paused 
-	bne do_sfx			; in this case, nothing will happen until it is changed back to 0 
-	jsr LZSSPlayFrame		; Play 1 LZSS frame
-	jsr LZSSUpdatePokeyRegisters	; buffer to let setpokeyfast match the RMT timing 
-	jsr fade_volume_loop		; run the fadeing out code from here until it's finished
-	lda is_playing_flag		; was the player paused/stopped after fadeing out?
-	bne do_sfx			; if not equal, it was most likely stopped, and so there is nothing else to do here 
-	jsr LZSSCheckEndOfSong		; is the current LZSS index done playing?
-	bne do_sfx			; if not, go back to the loop and wait until the next call
-	jsr SetNewSongPtrs		; update the subtune index for the next one in adjacent memory 
-do_sfx
-	jsr play_sfx			; process the SFX data, if an index is queued and ready to play for this frame 
-	
-;-----------------
+;	sta WSYNC
 
 check_key_pressed 
 	ldx SKSTAT		; Serial Port Status
@@ -126,9 +184,15 @@ continue			; do everything else during VBI after the keyboard checks
 continue_a 			; a new held key flag is set when jumped directly here
 	stx held_key_flag 
 continue_b 			; a key was detected as held when jumped directly here 
+;	jsr check_tune_index
 	jsr print_player_infos	; print most of the stuff on screen using printhex or printinfo in bulk 	
 	jsr calculate_time 	; update the timer, this one is actually necessary, so even with DMA off, it will be executed
 	jsr check_joystick	; check the inputs for tunes and sfx index 
+continue_c
+	:4 sta WSYNC
+;	lda VCOUNT
+;	bne continue_c
+	
 return_from_vbi	
 	pla			;* since we're in our own vbi routine, pulling all values manually is required! 
 	tay
@@ -249,6 +313,51 @@ stop_and_exit
 
 ;* Detect the machine region subroutine
 
+;* TODO: fix this shit
+;* TODO: optimise timing space so NTSC time actually "divides" evenly... it's trying to fit calculations for 312 lines!
+;* that means multispeed songs are not quite "right" in NTSC, because the interval is not actually constant between plays!
+
+detect_region	
+	lda VCOUNT
+	beq check_region	; vcount = 0, go to check_region and compare values
+	tax			; backup the value in index y
+	bne detect_region 	; repeat
+check_region
+;	stx region_byte		; will define the region text to print later
+	ldy #SongSpeed		; defined speed value, which may be overwritten by RMT as well
+PLAYER_SONG_SPEED equ *-1
+;	sty instrspeed		; will be re-used later as well for the xVBI speed value printed
+	IFT REGIONPLAYBACK==0	; if the player region defined for PAL...
+PLAYER_REGION_INIT equ *	
+	lda tabppPAL-1,y
+	sta acpapx2		; lines between each play
+	cpx #$9B		; compare X to 155
+	bmi set_ntsc		; negative result means the machine runs at 60hz		
+	lda tabppPALfix-1,y
+	ldy #50
+	bne region_done 
+set_ntsc
+	lda tabppNTSCfix-1,y	; if NTSC is detected, adjust the speed from PAL to NTSC
+	ldy #60
+	ELI REGIONPLAYBACK==1	; else, if the player region defined for NTSC...
+PLAYER_REGION_INIT equ *	
+	lda tabppNTSC-1,y
+	sta acpapx2		; lines between each play
+	cpx #$9B		; compare X to 155	
+	bpl set_pal		; positive result means the machine runs at 50hz 
+	lda tabppNTSCfix-1,y
+	ldy #60
+	bne region_done 
+set_pal
+	lda tabppPALfix-1,y	; if PAL is detected, adjust the speed from NTSC to PAL
+	ldy #50
+	EIF			; endif 
+region_done
+	sta ppap		; stability fix for screen synchronisation 
+	sty framecount
+	rts
+
+/*
 detect_region	
 	lda VCOUNT
 	beq check_region	; vcount = 0, go to check_region and compare values
@@ -267,6 +376,7 @@ region_done
 	stx play_skip 
 	sta framecount
 	rts
+*/
 
 ;-----------------
 
@@ -336,19 +446,24 @@ print_pointers
 	jsr printhex_direct
 	
 print_flags
-	ldy #89
+	ldy #86
 	lda LZS.Initialized
 	jsr printhex_direct
 	
-	ldy #97
+	ldy #94
 	lda is_playing_flag
 	jsr printhex_direct
 	
-	ldy #105
-	lda is_looping
+	ldy #101
+	lda is_looping 
+	sub #1
+	jsr printhex_direct
+	
+	ldy #108
+	lda loop_count 
 	jsr printhex_direct
 
-	ldy #113
+	ldy #116
 	lda is_fadeing_out
 	jsr printhex_direct
 	
@@ -712,6 +827,9 @@ do_trigger_fade_immediate
 ;* Song and SFX text data, 32 characters per entry, display 28 characters or less for best results
 
 song_name        
+;	dta d"Sketch 44 Chunks, 5048 bytes    "
+;	dta d"Sketch 44 Full, 21970 bytes     "
+	
 	dta d"Happy Bunnies, Boing Boing!     " 
 	dta d"Fantaisie Nocturne              " 
 	dta d"The Forest Is Peaceful Again    " 
@@ -763,13 +881,51 @@ sfx_09	ins '/Bunny Hop SFX/game-cannot_do.sfx'
 	
 line_0	dta d"  Time: 00:00      LZSS Address: $0000  "
 line_1	dta d"    StartPtr: $0000   EndPtr: $0000     "
-line_2	dta d"     I: $00  P: $00  L: $00  F: $00     "
+line_2	dta d"  I: $00  P: $00 C: $00 L: $00  F: $00  "
 line_3	dta d"Tune 01/01: (insert title here)         "
 line_4	dta d" SFX 01/01: (28 chars or less maybe)    "
 line_5	dta d"     Tune: Left/Right SFX: Up/Down      "
 line_6	dta d"  Press 'Fire' to play the selected SFX "
 line_7	dta d" DUMB Soundtest-LZSS by VinsCool   "
 line_7a	dta d"v0.1"*,$00
+
+;-----------------
+
+;* line counter spacing table for instrument speed from 1 to 16
+
+;-----------------
+
+;* the idea here is to pick the best sweet spots each VBI multiples to form 1 "optimal" table, for each region
+;* it seems like the number of lines for the 'fix' value MUST be higher than either 156 for better stability
+;* else, it will 'roll' at random, which is not good! better sacrifice a few lines to keep it stable...
+;* strangely enough, NTSC does NOT suffer from this weird rolling effect... So that one can use values above or below 131 fine
+
+;	    x1  x2  x3  x4  x5  x6  x7  x8  x9  x10 x11 x12 x13 x14 x15 x16 
+
+tabppPAL	; "optimal" PAL timing table
+	dta $9C,$4E,$34,$27,$20,$1A,$17,$14,$12,$10,$0F,$0D,$0C,$0C,$0B,$0A
+	
+tabppPALfix	; interval offsets for timing stability 
+	dta $9C,$9C,$9C,$9C,$A0,$9C,$A1,$A0,$A2,$A0,$A5,$9C,$9C,$A8,$A5,$A0
+	
+;-----------------
+	
+;* NTSC needs its own adjustment table too... And so will cross-region from both side... Yay numbers! 
+;* adjustments between regions get a lot trickier however...
+;* for example: 
+;* 1xVBI NTSC to PAL, 130 on 156 does work for a stable rate, but it would get all over the place for another number 
+
+;	    x1  x2  x3  x4  x5  x6  x7  x8  x9  x10 x11 x12 x13 x14 x15 x16 
+	
+tabppNTSC	; "optimal" NTSC timing table
+	dta $82,$41,$2B,$20,$1A,$15,$12,$10,$0E,$0D,$0B,$0A,$0A,$09,$08,$08
+
+tabppNTSCfix	; interval offsets for timing stability 
+	dta $82,$82,$81,$80,$82,$7E,$7E,$80,$7E,$82,$79,$78,$82,$7E,$78,$80
+
+;-----------------
+
+;* TODO: add cross region tables fix, might be a pain in the ass, blegh...
 
 ;-----------------
 
