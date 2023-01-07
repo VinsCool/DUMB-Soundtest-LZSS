@@ -19,6 +19,10 @@ SongSpeed	equ 1		; 1 => 50/60hz, 2 => 100/120hz, etc
 
 REGIONPLAYBACK	equ 0		; 0 => PAL, 1 => NTSC
 
+; Stereo is now supported with the LZSS driver!
+
+STEREO		equ 1		; 0 => MONO, 255 => STEREO, 1 => DUAL MONO
+
 DISPLAY 	equ $FE		; Display List indirect memory address
 
 ;* Subtune index number is offset by 1, meaning the subtune 0 would be subtune 1 visually
@@ -50,21 +54,15 @@ start
 	jsr set_index_count 	; print number of tunes and sfx indexed in memory
 	jsr set_tune_name	; print the tune name 
 	jsr set_sfx_name	; print the sfx name
-;	jsr stop_pause_reset	; clear the POKEY registers first 
-;	jsr SetNewSongPtrsFull	; initialise the LZSS driver with the song pointer using default values always 
 	jsr detect_region
 	jsr stop_toggle
-;	jsr reset_timer	
-;	dec play_skip 		; initialise the PAL/NTSC condition, player is skipped every 6th frame in NTSC 
 	ldx #$22		; DMA enable, normal playfield
 	stx SDMCTL		; write to Shadow Direct Memory Access Control address
 	ldx #50	
-
 wait_init   
 	jsr wait_vblank		; wait for vblank => 50 frames
 	dex			; decrement index x
 	bne wait_init		; repeat until x = 0, total wait time is ~2 seconds
-	
 init_done
 	sei			; Set Interrupt Disable Status
 	mwa VVBLKI oldvbi       ; vbi address backup
@@ -111,42 +109,33 @@ acpapx2	equ *-1
 	ldx #0
 	scs:inx
 	stx cku
-;	sty WSYNC			; horizontal sync for timing purpose
-do_play
+check_play_flag
 	lda is_playing_flag 		; 0 -> is playing, else it is either stopped or paused 
 	bne do_sfx			; in this case, nothing will happen until it is changed back to 0 
 	sty COLBK			; background colour 
+do_play
 	jsr setpokeyfull		; update the POKEY registers first, for both the SFX and LZSS music driver 
 	jsr LZSSPlayFrame		; Play 1 LZSS frame
 	jsr LZSSUpdatePokeyRegisters	; buffer to let setpokeyfast match the RMT timing 
+	jsr CheckForTwoToneBit		; if set, the Two-Tone Filter will be enabled 
+	lda is_stereo_flag		; FF == Stereo
+	beq finish_loop_code		; 0 == Mono
+;	bpl only_swap_buffer		; 1 == Dual Mono, unfinished 
+do_double_buffer			
+	jsr SwapBuffer			; dumb ass Stereo hack but hey if it works who the fuck cares
+	jsr LZSSPlayFrame		; Play 1 LZSS frame (again) 
+	jsr LZSSUpdatePokeyRegisters	; buffer to let setpokeyfast match the RMT timing (again) 
+	jsr CheckForTwoToneBit		; if set, the Two-Tone Filter will be enabled (again) 
+finish_loop_code
 	jsr fade_volume_loop		; run the fadeing out code from here until it's finished
 	lda is_playing_flag		; was the player paused/stopped after fadeing out?
 	bne do_sfx			; if not equal, it was most likely stopped, and so there is nothing else to do here 
-
-/*
-	beq do_play_next
-	ldy tune_index
-	iny
-	cpy #TUNE_NUM
-	bcc update_tune
-	beq update_tune
-	ldy #1
-	sty tune_index
-	bpl loop
-update_tune
-	sty tune_index
-	lda #0
-	sta is_playing_flag
-	beq loop
-*/
-
 do_play_next
 	jsr LZSSCheckEndOfSong		; is the current LZSS index done playing?
 	bne do_sfx			; if not, go back to the loop and wait until the next call
 	jsr SetNewSongPtrs		; update the subtune index for the next one in adjacent memory 
 do_sfx
 	jsr play_sfx			; process the SFX data, if an index is queued and ready to play for this frame 
-;	sty WSYNC
 	ldy #$00			; black colour value
 	sty COLBK			; background colour
 	beq loop			; unconditional
@@ -159,7 +148,6 @@ do_sfx
 
 vbi 
 ;	sta WSYNC
-
 check_key_pressed 
 	ldx SKSTAT		; Serial Port Status
 	txa
@@ -184,15 +172,11 @@ continue			; do everything else during VBI after the keyboard checks
 continue_a 			; a new held key flag is set when jumped directly here
 	stx held_key_flag 
 continue_b 			; a key was detected as held when jumped directly here 
-;	jsr check_tune_index
-	jsr print_player_infos	; print most of the stuff on screen using printhex or printinfo in bulk 	
-	jsr calculate_time 	; update the timer, this one is actually necessary, so even with DMA off, it will be executed
 	jsr check_joystick	; check the inputs for tunes and sfx index 
+	jsr calculate_time 	; update the timer, this one is actually necessary, so even with DMA off, it will be executed
+	jsr print_player_infos	; print most of the stuff on screen using printhex or printinfo in bulk 
 continue_c
-	:4 sta WSYNC
-;	lda VCOUNT
-;	bne continue_c
-	
+;	sta WSYNC
 return_from_vbi	
 	pla			;* since we're in our own vbi routine, pulling all values manually is required! 
 	tay
@@ -313,10 +297,6 @@ stop_and_exit
 
 ;* Detect the machine region subroutine
 
-;* TODO: fix this shit
-;* TODO: optimise timing space so NTSC time actually "divides" evenly... it's trying to fit calculations for 312 lines!
-;* that means multispeed songs are not quite "right" in NTSC, because the interval is not actually constant between plays!
-
 detect_region	
 	lda VCOUNT
 	beq check_region	; vcount = 0, go to check_region and compare values
@@ -357,39 +337,16 @@ region_done
 	sty framecount
 	rts
 
-/*
-detect_region	
-	lda VCOUNT
-	beq check_region	; vcount = 0, go to check_region and compare values
-	tax			; backup the value in index y
-	bne detect_region 	; repeat 
-check_region
-	cpx #$9B		; compare X to 155
-	bmi set_ntsc		; negative result means the machine runs at 60hz
-	lda #50
-	ldx #0			; roll over to #$FF, will always play
-	beq region_done
-set_ntsc
-	lda #60
-	ldx #6 			; every 6th frame, a play call is skipped to adjust the speed between PAL to NTSC 
-region_done	
-	stx play_skip 
-	sta framecount
-	rts
-*/
-
 ;-----------------
 
 ;* Print most infos on screen
 	
 print_player_infos
 	mwa #line_0 DISPLAY 	; get the right screen position
-
 print_minutes
 	lda v_minute
 	ldy #8
 	jsr printhex_direct
-	
 print_seconds
 	ldx v_second
 	txa
@@ -406,31 +363,26 @@ blink
 done_blink
 	txa
 	jsr printhex_direct
-
 print_order	
 	lda ZPLZS.SongPtr+1
 	ldy #34
 	jsr printhex_direct
-	
 print_row
 	lda ZPLZS.SongPtr 
 	ldy #36
 	jsr printhex_direct 
-	
 print_tune
 	lda #1
 tune_index equ *-1
 	jsr hex2dec_convert 
 	ldy #125
 	jsr printhex_direct 
-	
 print_sfx
 	lda #1
 sfx_index equ *-1
 	jsr hex2dec_convert 
 	ldy #165
 	jsr printhex_direct 
-
 print_pointers
 	ldy #55
 	lda LZS.SongStartPtr+1
@@ -444,29 +396,23 @@ print_pointers
 	iny
 	lda LZS.SongEndPtr
 	jsr printhex_direct
-	
 print_flags
 	ldy #86
 	lda LZS.Initialized
 	jsr printhex_direct
-	
 	ldy #94
 	lda is_playing_flag
 	jsr printhex_direct
-	
 	ldy #101
 	lda is_looping 
 	sub #1
 	jsr printhex_direct
-	
 	ldy #108
 	lda loop_count 
 	jsr printhex_direct
-
 	ldy #116
 	lda is_fadeing_out
 	jsr printhex_direct
-	
 	rts
 	
 ;-----------------
@@ -568,7 +514,7 @@ do_joystick_left
 	bmi tune_index_wrap
 	bne update_tune_index
 tune_index_wrap
-	ldy #TUNE_NUM
+	ldy SongTotal
 	bpl update_tune_index
 
 ;-----------------
@@ -579,7 +525,7 @@ do_joystick_right
 	cmp #%00000100 
 	bne update_tune_index 
 	iny
-	cpy #TUNE_NUM
+	cpy SongTotal
 	bcc update_tune_index
 	beq update_tune_index
 	ldy #1
@@ -717,8 +663,9 @@ update_both_name
 ;* Display the number of tunes and sfx indexed in memory, using the values defined at assembly time 
 
 set_index_count
-	mwa #line_0 DISPLAY 	; get the right screen position
+	mwa #line_0 DISPLAY 		; get the right screen position
 	lda #TUNE_NUM
+	SongTotal equ *-1
 	jsr hex2dec_convert 
 	ldy #128 
 	jsr printhex_direct
@@ -827,12 +774,8 @@ do_trigger_fade_immediate
 ;* Song and SFX text data, 32 characters per entry, display 28 characters or less for best results
 
 song_name        
-;	dta d"Sketch 44 Chunks, 5048 bytes    "
-;	dta d"Sketch 44 Full, 21970 bytes     "
-	
-	dta d"Happy Bunnies, Boing Boing!     " 
-	dta d"Fantaisie Nocturne              " 
-	dta d"The Forest Is Peaceful Again    " 
+	dta d"Sketch 44 Chunks, 5048 bytes    "
+	dta d"Sketch 44 Full, 21970 bytes     "
 
 sfx_name
 	dta d"Menu - Press                    " 

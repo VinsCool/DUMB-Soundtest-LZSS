@@ -17,7 +17,7 @@
 ;* ORG addresses can always be changed based on how memory is layed out, as long as it fits, it should work fine
 
 ZEROPAGE	equ $0000		; Zeropage, the addresses may be changed if necessary, required
-DRIVER		equ $1000		; Unrolled LZSS driver by rensoupp, for LZSS data buffer and driver routines, required
+DRIVER		equ $0800		; Unrolled LZSS driver by rensoupp, for LZSS data buffer and driver routines, required
 	
 ;* Below is a bunch of example addreses, they are not intended to be a requirement! 
 	
@@ -132,10 +132,8 @@ fade_volume_loop
 begin_fadeout			; below 0 means it is set, and must be initialised first 
 	lda #1			; unit of volume to subtract
 	sta is_fadeing_out	; flag and initial fade volume set
-
 	lda v_second		; current second
 	sta last_second_seen	; initialise the timer for fadeout
-
 continue_fadeout	
 	ldy #7			; index from the 4th AUDC 
 fade_volume_loop_a
@@ -158,32 +156,18 @@ volume_loop_again
 	sta SDWPOK0,y		; write the new AUDC value in memory for later
 	:2 dey			; decrement twice to only load the AUDC
 	bpl fade_volume_loop_a	; continue this loop until Y overflows to $FF 
-	
-;	lda RTCLOK+2 		; I wanted to use RTCLOK+2, but it doesn't work for some reason...
-;	lda v_frame		; frame counter from the time display routine
-;	and #$0F		; every 15 frames
-;	beq fade_increment	; if not 0, skip
-
 	lda v_second		; current second count
 	cmp #0			; compare to the last second loaded 
 	last_second_seen equ *-1
 	bne fade_increment
-	
-;;	beq fade_volume_done	; equal means 1 second has not yet passed, done
-;	sta last_second_seen	; otherwise, this becomes the new value to compare
-
 fade_volume_done
 	rts
-	
 fade_increment
-
 	sta last_second_seen
-
 	inc is_fadeing_out	; increment the fadeout value to subtract by 1 
 	lda is_fadeing_out	; load that value for the comparison 
 	cmp #11			; 10 seconds must have passed to reach 10 units
 	bcc fade_volume_done	; if the value is below the count, done 
-;	jmp stop_toggle		; else, stop the player once the end of the fadeout is reached 
 
 ;-----------------
 
@@ -209,6 +193,7 @@ stop_pause_reset
 	ldy #8
 stop_pause_reset_a 
 	sta SDWPOK0,y		; clear the POKEY values in memory 
+	sta SDWPOK1,y
 	dey 
 	bpl stop_pause_reset_a	; repeat until all channels were cleared 
 
@@ -237,21 +222,36 @@ setpokeyfull
 	sta $D206
 	stx $D207
 	sty $D208
-	rts
-	
-;* Left POKEY is used by default if a Stereo setup is used 
 
-SDWPOK0 
-POKF0	dta $00
-POKC0	dta $00
-POKF1	dta $00
-POKC1	dta $00
-POKF2	dta $00
-POKC2	dta $00
-POKF3	dta $00
-POKC3	dta $00
-POKCTL0	dta $00
-POKSKC0	dta $03	
+;* 0 == Mono, FF == Stereo, 1 == Dual Mono (only SwapBuffer is necessary for it) 
+
+	lda #STEREO
+	is_stereo_flag equ *-1
+	bne setpokeyfullstereo
+	rts
+
+setpokeyfullstereo
+	lda POKSKC1 
+	sta $D21F 
+	ldy POKCTL1
+	lda POKF4
+	ldx POKC4
+	sta $D210
+	stx $D211
+	lda POKF5
+	ldx POKC5
+	sta $D212
+	stx $D213
+	lda POKF6
+	ldx POKC6
+	sta $D214
+	stx $D215
+	lda POKF7
+	ldx POKC7
+	sta $D216
+	stx $D217
+	sty $D218
+	rts
 
 ;-----------------
 
@@ -268,7 +268,7 @@ set_play
 	rts
 set_pause 
 	inc is_playing_flag		; #0 -> #1 -> Pause 
-	bpl stop_pause_reset		; clear the POKEY registers, end with a RTS
+	jmp stop_pause_reset		; clear the POKEY registers, end with a RTS
 	
 ;-----------------
 
@@ -285,24 +285,6 @@ trigger_fade_immediate
 trigger_fade_done
 	rts 
 	
-;-----------------
-
-;* Carry flag returns the status
-;* Carry Clear -> Dummy/Invalid subtune length
-;* Carry Set -> Should be perfectly fine data, unless wrong pointers were set, garbage would play!
-
-check_loop_for_dummies
-	lda LZS.SongEndPtr+1
-	cmp LZS.SongStartPtr+1
-	bne dummy_check_done	; END is either above or below START, in any case, the Carry flag will tell the truth!
-maybe_a_dummy	
-	lda LZS.SongEndPtr
-	sec
-	sbc LZS.SongStartPtr
-	cmp #2			; should be short enough...
-dummy_check_done
-	rts			; done! the carry flag will dictate what to do
-        
 ;-----------------
 
 calculate_time 
@@ -347,6 +329,69 @@ reset_timer
 	sta v_frame		; reset the frames counter 
 	rts
 	
+;-----------------
+
+; Check the Volume Only bit in CH1, if set but below the $Fx range, it's used, else, it's proper Volume Only output
+
+CheckForTwoToneBit
+	ldy #3			; default SKCTL register state
+	ldx POKC0		; AUDC1
+	cpx #$F0		; is the tune expected to run with Proper Volume Only output?
+	bcs NoTwoTone		; if equal or above, this is not used for Two-Tone, don't set it
+	txa
+	and #$10		; test the Volume Only bit
+	beq NoTwoTone		; if it is not set, there is no Two-Tone Filter active
+	txa
+	eor #$10		; reverse the Volume Only bit
+	sta POKC0		; overwrite the AUDC
+	ldy #$8B		; set the Two-Tone Filter output
+NoTwoTone
+	sty POKSKC0		; overwrite the buffered SKCTL byte with the new value
+	rts
+
+;-----------------
+
+;* Swap POKEY buffers for Stereo Playback, this is a really dumb hack but that saves the troubles of touching the unrolled LZSS driver's code
+
+SwapBuffer
+	ldy #9
+SwapBufferLoop
+	lda SDWPOK0,y
+	sta SDWPOK1,y
+	dey
+	bpl SwapBufferLoop
+	rts
+
+;-----------------
+
+;* Left POKEY
+
+SDWPOK0 
+POKF0	dta $00
+POKC0	dta $00
+POKF1	dta $00
+POKC1	dta $00
+POKF2	dta $00
+POKC2	dta $00
+POKF3	dta $00
+POKC3	dta $00
+POKCTL0	dta $00
+POKSKC0	dta $03	
+
+;* Right POKEY
+
+SDWPOK1	
+POKF4	dta $00
+POKC4	dta $00
+POKF5	dta $00
+POKC5	dta $00
+POKF6	dta $00
+POKC6	dta $00
+POKF7	dta $00
+POKC7	dta $00
+POKCTL1	dta $00
+POKSKC1	dta $03
+
 ;-----------------
 
 ;//---------------------------------------------------------------------------------------------
