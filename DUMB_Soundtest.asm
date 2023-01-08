@@ -21,7 +21,7 @@ REGIONPLAYBACK	equ 0		; 0 => PAL, 1 => NTSC
 
 ; Stereo is now supported with the LZSS driver!
 
-STEREO		equ 1		; 0 => MONO, 255 => STEREO, 1 => DUAL MONO
+STEREO		equ 255		; 0 => MONO, 255 => STEREO, 1 => DUAL MONO
 
 DISPLAY 	equ $FE		; Display List indirect memory address
 
@@ -116,20 +116,37 @@ check_play_flag
 do_play
 	jsr setpokeyfull		; update the POKEY registers first, for both the SFX and LZSS music driver 
 	jsr LZSSPlayFrame		; Play 1 LZSS frame
-	jsr LZSSUpdatePokeyRegisters	; buffer to let setpokeyfast match the RMT timing 
 	jsr CheckForTwoToneBit		; if set, the Two-Tone Filter will be enabled 
-	lda is_stereo_flag		; FF == Stereo
-	beq finish_loop_code		; 0 == Mono
-;	bpl only_swap_buffer		; 1 == Dual Mono, unfinished 
-do_double_buffer			
-	jsr SwapBuffer			; dumb ass Stereo hack but hey if it works who the fuck cares
-	jsr LZSSPlayFrame		; Play 1 LZSS frame (again) 
-	jsr LZSSUpdatePokeyRegisters	; buffer to let setpokeyfast match the RMT timing (again) 
-	jsr CheckForTwoToneBit		; if set, the Two-Tone Filter will be enabled (again) 
-finish_loop_code
+	lda is_stereo_flag		; What is the current setup?
+	beq dont_swap			; Mono detected -> do nothing 
+	bmi do_swap			; Stereo detected -> swap Left and Right POKEY pointers
+	jsr SwapBufferCopy		; Dual Mono detected -> copy the Left POKEY to Right POKEY directly
+	bmi dont_swap			; Unconditional, the subroutine return with the value of $FF in Y 
+do_swap	
+	jsr SwapBuffer 			; swap the POKEY memory addresses for Stereo playback 
+	jsr LZSSPlayFrame		; Play 1 LZSS frame (for Right POKEY) 
+	jsr CheckForTwoToneBit		; check for Two-Tone again too
+	jsr fade_volume_loop		; hah! got ya with this one running first this time, again for the same purpose
+	jsr SwapBuffer			; revert to the original memory addresses for the next frame
+dont_swap
 	jsr fade_volume_loop		; run the fadeing out code from here until it's finished
 	lda is_playing_flag		; was the player paused/stopped after fadeing out?
-	bne do_sfx			; if not equal, it was most likely stopped, and so there is nothing else to do here 
+;	bne do_sfx			; if not equal, it was most likely stopped, and so there is nothing else to do here 
+	beq do_play_next		; if equal, continue
+do_loop
+	ldy tune_index
+	iny
+	cpy SongTotal
+	bcc seek_next
+	beq seek_next
+	ldy #1
+seek_next
+	sty tune_index
+;	dey
+	sty SongIdx
+do_loop_ok
+	jsr SetNewSongPtrsFull
+	jsr play_pause_toggle
 do_play_next
 	jsr LZSSCheckEndOfSong		; is the current LZSS index done playing?
 	bne do_sfx			; if not, go back to the loop and wait until the next call
@@ -138,7 +155,7 @@ do_sfx
 	jsr play_sfx			; process the SFX data, if an index is queued and ready to play for this frame 
 	ldy #$00			; black colour value
 	sty COLBK			; background colour
-	beq loop			; unconditional
+	jmp loop			; unconditional
 
 ;----------------- 
 
@@ -147,7 +164,7 @@ do_sfx
 ;* VBI loop, run through all the code that is needed, then return with a RTI 
 
 vbi 
-;	sta WSYNC
+	sta WSYNC
 check_key_pressed 
 	ldx SKSTAT		; Serial Port Status
 	txa
@@ -174,9 +191,10 @@ continue_a 			; a new held key flag is set when jumped directly here
 continue_b 			; a key was detected as held when jumped directly here 
 	jsr check_joystick	; check the inputs for tunes and sfx index 
 	jsr calculate_time 	; update the timer, this one is actually necessary, so even with DMA off, it will be executed
+	jsr check_tune_index
 	jsr print_player_infos	; print most of the stuff on screen using printhex or printinfo in bulk 
 continue_c
-;	sta WSYNC
+	sta WSYNC
 return_from_vbi	
 	pla			;* since we're in our own vbi routine, pulling all values manually is required! 
 	tay
@@ -773,9 +791,19 @@ do_trigger_fade_immediate
 
 ;* Song and SFX text data, 32 characters per entry, display 28 characters or less for best results
 
-song_name        
-	dta d"Sketch 44 Chunks, 5048 bytes    "
-	dta d"Sketch 44 Full, 21970 bytes     "
+song_name 
+	dta d"Flob - Escape from the Lab      "
+	dta d"Gordian Tomb - Tune 1 Stereo    "
+/*
+	dta d"Sketch 53                       "
+	dta d"Sieur Goupil                    "
+	dta d"Shoreline From Another World    "
+	dta d"Sketch 58                       "
+	dta d"Sketch 69                       "
+	dta d"Sketch 24                       "
+	dta d"Another Dumb Experiment         "
+	dta d"Bouncy Bouncer                  "
+*/
 
 sfx_name
 	dta d"Menu - Press                    " 

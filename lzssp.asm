@@ -42,7 +42,8 @@ DRIVER		equ $0800		; Unrolled LZSS driver by rensoupp, for LZSS data buffer and 
 ;* The unrolled LZSS driver + Buffer will be inserted here first, it is a requirement!
 
 	org DRIVER
-	icl "playlzs16u.asm"
+;	icl "playlzs16u.asm"
+	icl "playlzs16-dumb.asm"
 
 ;-----------------
 
@@ -138,6 +139,7 @@ continue_fadeout
 	ldy #7			; index from the 4th AUDC 
 fade_volume_loop_a
 	lda SDWPOK0,y		; current POKEY buffer
+	bufffade1 equ *-2
 	tax			; backup for the next step
 	and #$0F		; keep only the volume values
 	sec			; set carry for the subtraction
@@ -154,6 +156,7 @@ set_new_volume
 	ora_volume equ *-1
 volume_loop_again
 	sta SDWPOK0,y		; write the new AUDC value in memory for later
+	bufffade2 equ *-2
 	:2 dey			; decrement twice to only load the AUDC
 	bpl fade_volume_loop_a	; continue this loop until Y overflows to $FF 
 	lda v_second		; current second count
@@ -193,7 +196,7 @@ stop_pause_reset
 	ldy #8
 stop_pause_reset_a 
 	sta SDWPOK0,y		; clear the POKEY values in memory 
-	sta SDWPOK1,y
+	sta SDWPOK1,y		; write to both POKEYs even if there is no Stereo setup, that won't harm anything
 	dey 
 	bpl stop_pause_reset_a	; repeat until all channels were cleared 
 
@@ -333,9 +336,10 @@ reset_timer
 
 ; Check the Volume Only bit in CH1, if set but below the $Fx range, it's used, else, it's proper Volume Only output
 
-CheckForTwoToneBit
-	ldy #3			; default SKCTL register state
-	ldx POKC0		; AUDC1
+CheckForTwoToneBit		
+	ldy #1
+	ldx SDWPOK0,y		; AUDC1
+	bufftwo equ *-2
 	cpx #$F0		; is the tune expected to run with Proper Volume Only output?
 	bcs NoTwoTone		; if equal or above, this is not used for Two-Tone, don't set it
 	txa
@@ -343,17 +347,42 @@ CheckForTwoToneBit
 	beq NoTwoTone		; if it is not set, there is no Two-Tone Filter active
 	txa
 	eor #$10		; reverse the Volume Only bit
-	sta POKC0		; overwrite the AUDC
-	ldy #$8B		; set the Two-Tone Filter output
+	sta SDWPOK0,y		; overwrite the AUDC
+	bufftone equ *-2
+	lda #$8B		; set the Two-Tone Filter output
+	bne SetTwoTone		; unconditional 
 NoTwoTone
-	sty POKSKC0		; overwrite the buffered SKCTL byte with the new value
+	lda #3			; default SKCTL register state
+SetTwoTone
+	ldy #9
+	sta SDWPOK0,y		; overwrite the buffered SKCTL byte with the new value
+	buffbit equ *-2
 	rts
 
 ;-----------------
 
-;* Swap POKEY buffers for Stereo Playback, this is a really dumb hack but that saves the troubles of touching the unrolled LZSS driver's code
+;* Swap POKEY buffers for Stereo Playback
+;* This is a really dumb hack that shouldn't harm the LZSS driver if everything works as expected... 
 
 SwapBuffer
+	lda #<SDWPOK1
+	cmp #<SDWPOK0
+	buffset equ *-1
+	bne SwapBufferSet
+SwapBufferReset
+	lda #<SDWPOK0
+SwapBufferSet
+	sta buffset
+	sta buffstore
+	sta bufffade1 
+	sta bufffade2 
+	sta bufftwo
+	sta bufftone
+	sta buffbit
+SwapBufferDone
+	rts
+	
+SwapBufferCopy
 	ldy #9
 SwapBufferLoop
 	lda SDWPOK0,y
